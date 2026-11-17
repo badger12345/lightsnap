@@ -114,10 +114,9 @@ impl Recorder {
                     .args(platform::ffmpeg_input_args(*screen_index, o.audio.as_deref(), o.fps, o.cursor, o.clicks))
                     .args(["-vf", &filter])
                     .args(["-r", &o.fps.to_string()])
-                    .args(["-c:v", "libx264", "-preset", "veryfast"])
-                    .args(["-crf", &o.quality.crf().to_string(), "-pix_fmt", "yuv420p"]);
+                    .args(platform::video_encoder_args(o.quality.video_q()));
                 if o.audio.is_some() {
-                    cmd.args(["-c:a", "aac", "-b:a", "128k"]);
+                    cmd.args(platform::audio_encoder_args());
                 }
                 cmd.arg(&seg);
                 self.segments.push(seg);

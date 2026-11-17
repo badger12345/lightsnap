@@ -9,11 +9,20 @@ use std::process::{Child, Command, Stdio};
 
 /// Places to look for ffmpeg, in order.
 pub fn ffmpeg_candidates() -> Vec<PathBuf> {
-    let mut candidates: Vec<PathBuf> = vec![
+    let mut candidates = Vec::new();
+    // The one shipped next to the app's own binary (LightSnap.app/Contents/MacOS/ffmpeg).
+    if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.to_path_buf())) {
+        candidates.push(dir.join("ffmpeg"));
+    }
+    // Run from source: the one scripts/build-ffmpeg.sh made, else one from a package manager.
+    if cfg!(debug_assertions) {
+        candidates.push(concat!(env!("CARGO_MANIFEST_DIR"), "/build/ffmpeg/bin/ffmpeg").into());
+    }
+    candidates.extend::<[PathBuf; 3]>([
         "/opt/homebrew/bin/ffmpeg".into(),
         "/usr/local/bin/ffmpeg".into(),
         "/opt/local/bin/ffmpeg".into(),
-    ];
+    ]);
     if let Some(path) = std::env::var_os("PATH") {
         candidates.extend(std::env::split_paths(&path).map(|d| d.join("ffmpeg")));
     }
@@ -58,6 +67,17 @@ pub fn list_devices(ffmpeg: &Path) -> Devices {
 }
 
 /// ffmpeg arguments that select the screen (and microphone) to record, up to and including `-i`.
+/// Encode video with Apple's hardware H.264 encoder. `quality` goes from 1 to 100.
+pub fn video_encoder_args(quality: u32) -> Vec<String> {
+    let q = quality.clamp(1, 100).to_string();
+    ["-c:v", "h264_videotoolbox", "-q:v", &q, "-pix_fmt", "yuv420p"].iter().map(|s| s.to_string()).collect()
+}
+
+/// Encode sound with Apple's AAC encoder.
+pub fn audio_encoder_args() -> Vec<String> {
+    ["-c:a", "aac_at", "-b:a", "128k"].iter().map(|s| s.to_string()).collect()
+}
+
 pub fn ffmpeg_input_args(screen_index: usize, audio: Option<&str>, fps: u32, cursor: bool, clicks: bool) -> Vec<String> {
     let input = match audio {
         Some(a) => format!("{screen_index}:{a}"),

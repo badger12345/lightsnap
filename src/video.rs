@@ -241,8 +241,8 @@ impl VideoView {
                     // Only the container changes: no re-encoding needed.
                     cmd.args(["-c", "copy"]);
                 } else {
-                    cmd.args(["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p"])
-                        .args(["-c:a", "aac", "-b:a", "128k"]);
+                    cmd.args(crate::platform::video_encoder_args(crate::settings::Quality::High.video_q()))
+                        .args(crate::platform::audio_encoder_args());
                 }
                 if o.format == VideoFormat::Mp4 {
                     cmd.args(["-movflags", "+faststart"]);

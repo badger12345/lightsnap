@@ -14,6 +14,10 @@ SIGN_ID="${LIGHTSNAP_SIGN_ID:-LightSnap Dev}"
 TARGET=aarch64-apple-darwin
 APP=dist/LightSnap.app
 
+if [ ! -x build/ffmpeg/bin/ffmpeg ]; then
+    ./scripts/build-ffmpeg.sh
+fi
+
 echo "==> Building LightSnap $VERSION ($TARGET)"
 MACOSX_DEPLOYMENT_TARGET=13.0 cargo build --release --target "$TARGET"
 
@@ -26,6 +30,8 @@ echo "==> Putting $APP together"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "target/$TARGET/release/lightsnap" "$APP/Contents/MacOS/lightsnap"
+# Our own LGPL build (scripts/build-ffmpeg.sh), found next to the app binary at run time.
+cp build/ffmpeg/bin/ffmpeg "$APP/Contents/MacOS/ffmpeg"
 sed "s/@VERSION@/$VERSION/g" macos/Info.plist > "$APP/Contents/Info.plist"
 plutil -lint -s "$APP/Contents/Info.plist"
 iconutil -c icns "$WORK/AppIcon.iconset" -o "$APP/Contents/Resources/AppIcon.icns"
@@ -38,8 +44,11 @@ else
     echo "==> No certificate \"$SIGN_ID\" in the keychain: signing ad hoc"
     echo "    (macOS will ask for screen-recording permission again after each build)"
 fi
-codesign --force --options runtime --timestamp=none \
-    --entitlements macos/LightSnap.entitlements --sign "$ID" "$APP"
+# Inside out: ffmpeg first (it records the microphone, so it needs the same entitlement).
+for target in "$APP/Contents/MacOS/ffmpeg" "$APP"; do
+    codesign --force --options runtime --timestamp=none \
+        --entitlements macos/LightSnap.entitlements --sign "$ID" "$target"
+done
 codesign --verify --strict "$APP"
 
 ZIP="dist/LightSnap-$VERSION.zip"

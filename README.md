@@ -7,13 +7,18 @@ Runs on Apple Silicon Macs. Tested on macOS 27.
 
 ## Build
 
-Needs Rust (https://rustup.rs). Video recording, trimming and GIF export also need ffmpeg
-(for now: `brew install ffmpeg`).
+Needs Rust (https://rustup.rs) and the Xcode command line tools.
 
 ```bash
+./scripts/build-ffmpeg.sh  # once: build the ffmpeg that ships with the app (a few minutes)
 cargo run                  # run from source
 ./scripts/bundle.sh        # build dist/LightSnap.app and dist/LightSnap-<version>.zip
 ```
+
+Video recording, trimming and GIF export use ffmpeg. `scripts/build-ffmpeg.sh` downloads the
+official source, checks its signature and builds an LGPL-only ffmpeg (no x264) that encodes
+with Apple's hardware encoder. `bundle.sh` puts it into the app. When run from source,
+LightSnap uses this build, or else an ffmpeg from Homebrew.
 
 ## Signing
 

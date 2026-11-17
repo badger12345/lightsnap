@@ -192,11 +192,12 @@ impl Quality {
             Quality::High => "High recording quality",
         }
     }
-    pub fn crf(self) -> u32 {
+    /// Video quality from 1 (smallest file) to 100 (best picture).
+    pub fn video_q(self) -> u32 {
         match self {
-            Quality::Low => 32,
-            Quality::Medium => 26,
-            Quality::High => 20,
+            Quality::Low => 35,
+            Quality::Medium => 50,
+            Quality::High => 60,
         }
     }
 }
