@@ -27,21 +27,51 @@ LightSnap uses this build, or else an ffmpeg from Homebrew.
 your keychain. Without it the app is signed ad hoc. That works too, but macOS then treats
 every new build as a new app and asks for the screen-recording permission again.
 
+The signature pins the exact certificate. macOS keeps the screen-recording permission only
+as long as every build is signed with the same one. A new certificate, or a lost one, makes
+every user grant the permission again. So give it a long life and keep a backup.
+
 To create the certificate once (free, no Apple developer account):
 
-1. Open **Keychain Access**.
+1. Open **Keychain Access** (Spotlight: "Keychain Access", or `open -a "Keychain Access"`).
 2. Menu **Keychain Access › Certificate Assistant › Create a Certificate…**
 3. Name: `LightSnap Dev`, Identity Type: **Self-Signed Root**, Certificate Type: **Code Signing**.
-4. Click **Create**.
+   Tick **Let me override defaults**, then **Continue**.
+4. Validity Period: `7300` days (20 years). Click **Continue** on the following pages and keep
+   the defaults. Leave the email address empty, it would show in every signed app.
+5. Keychain: **login**. Click **Create**.
 
 The first build after that asks whether `codesign` may use the key: choose **Always Allow**.
-To use a different certificate, set `LIGHTSNAP_SIGN_ID="<name>"`.
+To use a different certificate, set `LIGHTSNAP_SIGN_ID="<name>"`. `bundle.sh` warns 90 days
+before the certificate expires and stops if two certificates have the same name.
+
+**Backup:** In Keychain Access, under **My Certificates**, right-click **LightSnap Dev ›
+Export**, save as `.p12` with a strong password, and keep the file and password in a password
+manager. To restore it on another Mac, double-click the file.
+
+Releases by badger12345 are signed with this certificate:
+
+    LightSnap Dev, SHA-1 d51bd93470b3635b5b854c8edb609a7709b3f3a6
+
+To check a copy, run `codesign -d -r- LightSnap.app`. It shows the SHA-1 as
+`certificate leaf = H"…"`.
 
 ## First start on another Mac
 
-The app is not notarized by Apple, so macOS blocks it the first time. Open it once, then go to
-**System Settings › Privacy & Security** and click **Open Anyway**. After that, allow
-**Screen & System Audio Recording** for LightSnap when asked.
+The app is not notarized by Apple (that needs a paid developer account), so macOS blocks it
+the first time:
+
+1. Unzip `LightSnap-<version>.zip` and move `LightSnap.app` to **Applications**.
+2. Open it. macOS says it cannot check the app. Click **Done** (not "Move to Trash").
+3. Go to **System Settings › Privacy & Security**, scroll down to the message about LightSnap
+   and click **Open Anyway**. Confirm with your password or Touch ID.
+4. Allow **Screen & System Audio Recording** when LightSnap asks, then quit and reopen it.
+
+Instead of steps 2 and 3, you can remove the download mark in Terminal:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/LightSnap.app
+```
 
 ## License
 

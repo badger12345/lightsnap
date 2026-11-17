@@ -63,9 +63,24 @@ for bin in "$APP/Contents/MacOS/"*; do
     fi
 done
 
-if security find-identity -p codesigning | grep -qF "\"$SIGN_ID\""; then
-    ID="$SIGN_ID"
-    echo "==> Signing with \"$ID\""
+# Sign by the certificate's SHA-1, so the name may not stand for two certificates.
+# The signature pins this exact certificate: macOS keeps the screen-recording
+# permission only while builds use the same one (see README.md, Signing).
+HASHES=$(security find-identity -p codesigning | grep -F "\"$SIGN_ID\"" | awk '{print $2}' | sort -u)
+if [ "$(printf '%s' "$HASHES" | grep -c .)" -gt 1 ]; then
+    echo "More than one certificate \"$SIGN_ID\" in the keychain. Delete the old one:"
+    echo "$HASHES"; exit 1
+elif [ -n "$HASHES" ]; then
+    ID="$HASHES"
+    echo "==> Signing with \"$SIGN_ID\" (SHA-1 $ID)"
+    CERT=$(security find-certificate -a -Z -p -c "$SIGN_ID" \
+        | awk -v h="$ID" '/^SHA-1 hash:/ {keep = ($3 == h); next} keep')
+    if ! printf '%s\n' "$CERT" | openssl x509 -noout -checkend 0 > /dev/null; then
+        echo "The certificate \"$SIGN_ID\" has expired. See README.md, Signing."; exit 1
+    elif ! printf '%s\n' "$CERT" | openssl x509 -noout -checkend $((90 * 86400)) > /dev/null; then
+        echo "    WARNING: the certificate expires on $(printf '%s\n' "$CERT" | openssl x509 -noout -enddate | cut -d= -f2)."
+        echo "    A new one makes every user grant the screen-recording permission again."
+    fi
 else
     ID="-"
     echo "==> No certificate \"$SIGN_ID\" in the keychain: signing ad hoc"
@@ -76,9 +91,22 @@ for target in "$APP/Contents/MacOS/ffmpeg" "$APP"; do
     codesign --force --options runtime --timestamp=none \
         --entitlements macos/LightSnap.entitlements --sign "$ID" "$target"
 done
-codesign --verify --strict "$APP"
+
+# Check what got signed: valid, hardened runtime on both binaries.
+check_signature() {
+    codesign --verify --deep --strict "$1"
+    for bin in "$1/Contents/MacOS/lightsnap" "$1/Contents/MacOS/ffmpeg"; do
+        info=$(codesign -dv "$bin" 2>&1)
+        grep -q '^CodeDirectory.*(runtime)' <<< "$info" \
+            || { echo "No hardened runtime on $bin"; exit 1; }
+    done
+}
+check_signature "$APP"
 
 ZIP="dist/LightSnap-$VERSION.zip"
 rm -f "$ZIP"
 ditto -c -k --keepParent "$APP" "$ZIP"
+# The zip is what people get: unpack it and check the signature survived.
+ditto -x -k "$ZIP" "$WORK/unzipped"
+check_signature "$WORK/unzipped/LightSnap.app"
 echo "==> Done: $APP and $ZIP"
