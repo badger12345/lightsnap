@@ -11,6 +11,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+// Videos opened by the person may come from anywhere. `-protocol_whitelist file` stops
+// ffmpeg from following links inside a file (playlists, network URLs) to other places.
+
 pub struct Probe {
     pub duration: f32,
     pub size: [u32; 2],
@@ -19,7 +22,7 @@ pub struct Probe {
 /// Reads duration and size from ffmpeg's description of the file.
 pub fn probe(ffmpeg: &Path, file: &Path) -> Option<Probe> {
     let out = Command::new(ffmpeg)
-        .args(["-hide_banner", "-i"])
+        .args(["-hide_banner", "-protocol_whitelist", "file", "-i"])
         .arg(file)
         .stdin(Stdio::null())
         .output()
@@ -167,7 +170,7 @@ impl VideoView {
             if play_for.is_some() {
                 cmd.arg("-re");
             }
-            cmd.args(["-ss", &format!("{from:.3}"), "-i"]).arg(&path);
+            cmd.args(["-protocol_whitelist", "file", "-ss", &format!("{from:.3}"), "-i"]).arg(&path);
             match play_for {
                 Some(d) => {
                     cmd.args(["-t", &format!("{:.3}", d.max(0.05))]);
@@ -216,7 +219,7 @@ impl VideoView {
             return std::fs::copy(&path, &dest).map(|_| dest).map_err(|e| format!("Could not save the video: {e}"));
         }
         let mut cmd = Command::new(ff);
-        cmd.args(["-hide_banner", "-loglevel", "error", "-y"]);
+        cmd.args(["-hide_banner", "-loglevel", "error", "-y", "-protocol_whitelist", "file"]);
         if let Some((s, _)) = o.trim {
             cmd.args(["-ss", &format!("{s:.3}")]);
         }

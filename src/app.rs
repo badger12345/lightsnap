@@ -269,7 +269,7 @@ impl LightSnap {
         };
 
         // The menu-bar icon and global shortcuts are skipped for a quick check picture.
-        if !quiet || std::env::var_os("LS_TEST_TRAY").is_some() {
+        if !quiet || test_env("LS_TEST_TRAY") {
             app.tray = build_tray(&app.settings);
             {
                 let tx = tx.clone();
@@ -287,7 +287,7 @@ impl LightSnap {
             app.open_file(&ctx, &p);
         }
         // For check pictures: LS_PREFS=general|advanced|hotkeys draws the settings inside the main window.
-        if let (true, Ok(tab)) = (app.shot.is_some(), std::env::var("LS_PREFS")) {
+        if let (true, Ok(tab)) = (app.shot.is_some() && cfg!(debug_assertions), std::env::var("LS_PREFS")) {
             ctx.set_embed_viewports(true);
             app.pending_size = Some(vec2(900.0, 840.0));
             app.prefs.open();
@@ -787,7 +787,7 @@ impl LightSnap {
         if !v.is_trimmed() && dir == self.settings.save_dir {
             if let Some(saved) = v.saved.clone().filter(|p| p.extension().is_some_and(|e| e == ext.as_str())) {
                 if then_copy {
-                    copy_file_ref(&saved);
+                    capture::copy_file_ref(&saved);
                     self.toast("Copied the video file", Some(saved));
                 }
                 return;
@@ -997,7 +997,7 @@ impl LightSnap {
                             }
                         }
                         if self.copy_after_save {
-                            copy_file_ref(&p);
+                            capture::copy_file_ref(&p);
                             self.toast("Saved and copied the video file", Some(p));
                         } else {
                             self.toast(format!("Saved to {}", short_path(&p)), Some(p));
@@ -2079,7 +2079,7 @@ impl eframe::App for LightSnap {
         }
 
         self.handle_events(ctx);
-        if std::env::var_os("LS_TEST_AUTOREC").is_some() {
+        if test_env("LS_TEST_AUTOREC") {
             if let Some(r) = &self.recording {
                 if r.rec.elapsed() > Duration::from_secs(3) {
                     eprintln!("TEST rect={:?} screen={:?}", r.rect, r.screen);
@@ -2093,11 +2093,11 @@ impl eframe::App for LightSnap {
                 }
             }
         }
-        if std::env::var_os("LS_TEST_RECORD").is_some() && !self.test_prefs_done {
+        if test_env("LS_TEST_RECORD") && !self.test_prefs_done {
             self.test_prefs_done = true;
             self.run_action(ctx, Action::Record);
         }
-        if std::env::var_os("LS_TEST_EDIT").is_some() && !self.test_dialog_done {
+        if test_env("LS_TEST_EDIT") && !self.test_dialog_done {
             if let Some(ed) = &mut self.ed {
                 self.test_dialog_done = true;
                 let font = self.font.clone();
@@ -2106,7 +2106,7 @@ impl eframe::App for LightSnap {
         }
         self.auto_copy_edits(ctx);
         // Test hook: LS_TEST_PREFS=1 opens Preferences once, as the menu-bar item does.
-        if std::env::var_os("LS_TEST_PREFS").is_some() && !self.prefs.open && !self.test_prefs_done {
+        if test_env("LS_TEST_PREFS") && !self.prefs.open && !self.test_prefs_done {
             self.test_prefs_done = true;
             self.run_action(ctx, Action::Settings);
         }
@@ -2178,7 +2178,7 @@ impl eframe::App for LightSnap {
 
         // Area selection before a recording.
         let mut sel_out = self.select_overlay(&ctx);
-        if std::env::var_os("LS_TEST_AUTOREC").is_some() && self.select.is_some() {
+        if test_env("LS_TEST_AUTOREC") && self.select.is_some() {
             let t = *self.test_select_since.get_or_insert_with(Instant::now);
             if t.elapsed() > Duration::from_millis(1500) {
                 if let Some(r) = self.select.as_ref().and_then(|s| s.rect) {
@@ -2229,7 +2229,7 @@ impl eframe::App for LightSnap {
         if out.save_dir_changed {
             self.recent_dirty = true;
         }
-        if std::env::var_os("LS_TEST_DIALOG").is_some() && self.prefs.open && !self.test_dialog_done {
+        if test_env("LS_TEST_DIALOG") && self.prefs.open && !self.test_dialog_done {
             self.test_dialog_done = true;
             let d = rfd::AsyncFileDialog::new().set_directory(&self.settings.save_dir);
             self.spawn_dialog(&ctx, DialogKind::SaveDir, d.pick_folder());
@@ -2588,6 +2588,11 @@ fn short_path(p: &Path) -> String {
     }
 }
 
+/// Test hooks (LS_TEST_*) only work in debug builds; a release build ignores them.
+fn test_env(name: &str) -> bool {
+    cfg!(debug_assertions) && std::env::var_os(name).is_some()
+}
+
 fn recent_files(dir: &Path, n: usize) -> Vec<PathBuf> {
     let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
     let mut v: Vec<(std::time::SystemTime, PathBuf)> = rd
@@ -2609,11 +2614,6 @@ fn notify(title: &str, body: &str) {
     let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
     let script = format!("display notification \"{}\" with title \"LightSnap\" subtitle \"{}\"", esc(body), esc(title));
     let _ = std::process::Command::new("/usr/bin/osascript").args(["-e", &script]).spawn();
-}
-
-fn copy_file_ref(p: &Path) {
-    let script = format!("set the clipboard to (POSIX file \"{}\")", p.display().to_string().replace('"', "\\\""));
-    let _ = std::process::Command::new("/usr/bin/osascript").args(["-e", &script]).status();
 }
 
 fn setup_style(ctx: &egui::Context, font_bytes: Vec<u8>) {

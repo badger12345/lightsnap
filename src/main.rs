@@ -36,7 +36,9 @@ fn main() -> eframe::Result<()> {
         .skip(1)
         .filter(|(i, a)| !a.starts_with("--") && args.get(i - 1).is_none_or(|p| p != "--screenshot"))
         .map(|(_, a)| PathBuf::from(a))
-        .find(|p| p.is_file());
+        .find(|p| p.is_file())
+        // Absolute, so ffmpeg never reads a name like "x:y.mov" as a protocol.
+        .map(|p| std::fs::canonicalize(&p).unwrap_or(p));
 
     // Start quietly in the menu bar; only the very first start shows the window.
     if screenshot.is_none() && !no_focus && open.is_none() {
