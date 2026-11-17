@@ -79,8 +79,16 @@ pub fn audio_encoder_args() -> Vec<String> {
 }
 
 /// Output options that make ffmpeg play sound on the default speakers.
+///
+/// ffmpeg's audiotoolbox output holds just two buffers of one packet each. With the
+/// usual ~20 ms packets they run dry and the sound crackles, so the sound goes out in
+/// 100 ms blocks. Writing blocks until a buffer is free, so the sound card sets the pace.
+/// On exit it drops what is still queued, so a bit of silence goes after the sound.
 pub fn sound_output_args() -> Vec<String> {
-    ["-f", "audiotoolbox", "-"].iter().map(|s| s.to_string()).collect()
+    ["-af", "aresample=48000,apad=pad_dur=0.3,asetnsamples=n=4800:p=0", "-f", "audiotoolbox", "-"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 pub fn ffmpeg_input_args(screen_index: usize, audio: Option<&str>, fps: u32, cursor: bool, clicks: bool) -> Vec<String> {

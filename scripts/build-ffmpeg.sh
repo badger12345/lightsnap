@@ -68,7 +68,7 @@ echo "==> Configuring"
     --enable-encoder=h264_videotoolbox,aac_at,gif,rawvideo,pcm_s16le,pcm_f32le \
     --enable-parser=h264,hevc,aac,mpegaudio,gif \
     --enable-bsfs \
-    --enable-filter='buffer,buffersink,abuffer,abuffersink,format,aformat,null,anull,crop,scale,fps,split,palettegen,paletteuse,aresample,trim,atrim,setpts,asetpts,copy,acopy' \
+    --enable-filter='buffer,buffersink,abuffer,abuffersink,format,aformat,null,anull,crop,scale,fps,split,palettegen,paletteuse,aresample,asetnsamples,apad,trim,atrim,setpts,asetpts,copy,acopy' \
     > "$ROOT/ffmpeg-configure.log"
 
 echo "==> Building (takes a few minutes)"

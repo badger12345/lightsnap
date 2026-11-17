@@ -133,7 +133,9 @@ impl VideoView {
             self.pos = from + start.elapsed().as_secs_f32();
             if self.pos >= self.trim.1 {
                 self.pos = self.trim.1;
-                self.stop();
+                // Let the sound play out; it ends by itself right after.
+                self.generation.fetch_add(1, Ordering::SeqCst);
+                self.play_started = None;
                 return false;
             }
             return true;
@@ -162,10 +164,12 @@ impl VideoView {
             return;
         }
         self.sound = Command::new(ffmpeg)
-            .args(["-hide_banner", "-loglevel", "error", "-re", "-protocol_whitelist", "file"])
-            .args(["-ss", &format!("{from:.3}"), "-i"])
+            // No -re here: the sound card sets the pace (see sound_output_args).
+            .args(["-hide_banner", "-loglevel", "error", "-protocol_whitelist", "file"])
+            // Read only up to the end of the trim; the padding after it is silence.
+            .args(["-ss", &format!("{from:.3}"), "-t", &format!("{:.3}", secs.max(0.05)), "-i"])
             .arg(&self.path)
-            .args(["-t", &format!("{:.3}", secs.max(0.05)), "-vn"])
+            .args(["-t", &format!("{:.3}", secs.max(0.05) + 0.3), "-vn"])
             .args(crate::platform::sound_output_args())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
