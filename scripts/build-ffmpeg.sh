@@ -3,8 +3,9 @@
 #
 # License: LGPL 2.1 or later. No --enable-gpl, no --enable-nonfree, no x264.
 # Video is encoded with Apple's h264_videotoolbox, audio with aac_at.
-# Only what LightSnap uses is built in: screen capture (avfoundation), mp4/mov/gif
-# in and out, a handful of filters, and local files only (no network).
+# Only what LightSnap uses is built in: screen capture (avfoundation), sound output
+# for the player (audiotoolbox), mp4/mov/gif in and out, a handful of filters,
+# and local files only (no network).
 #
 # Result: build/ffmpeg/bin/ffmpeg (Apple Silicon, macOS 13 or later).
 # The source tarball stays in build/ so it can be passed on with the app (LGPL).
@@ -58,13 +59,13 @@ echo "==> Configuring"
     --disable-doc --disable-ffplay --disable-ffprobe --disable-network \
     --disable-debug --enable-static --disable-shared \
     --enable-avfoundation --enable-videotoolbox --enable-audiotoolbox \
-    --enable-indev=avfoundation \
+    --enable-indev=avfoundation --enable-outdev=audiotoolbox \
     --enable-protocol=file,pipe \
     --enable-demuxer=mov,concat,gif \
     --enable-muxer=mp4,mov,gif,rawvideo \
     --enable-decoder='h264,hevc,prores,mpeg4,aac,mp3,alac,pcm*,rawvideo,gif' \
     --enable-hwaccel=h264_videotoolbox,hevc_videotoolbox \
-    --enable-encoder=h264_videotoolbox,aac_at,gif,rawvideo \
+    --enable-encoder=h264_videotoolbox,aac_at,gif,rawvideo,pcm_s16le,pcm_f32le \
     --enable-parser=h264,hevc,aac,mpegaudio,gif \
     --enable-bsfs \
     --enable-filter='buffer,buffersink,abuffer,abuffersink,format,aformat,null,anull,crop,scale,fps,split,palettegen,paletteuse,aresample,trim,atrim,setpts,asetpts,copy,acopy' \

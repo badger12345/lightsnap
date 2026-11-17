@@ -78,6 +78,11 @@ pub fn audio_encoder_args() -> Vec<String> {
     ["-c:a", "aac_at", "-b:a", "128k"].iter().map(|s| s.to_string()).collect()
 }
 
+/// Output options that make ffmpeg play sound on the default speakers.
+pub fn sound_output_args() -> Vec<String> {
+    ["-f", "audiotoolbox", "-"].iter().map(|s| s.to_string()).collect()
+}
+
 pub fn ffmpeg_input_args(screen_index: usize, audio: Option<&str>, fps: u32, cursor: bool, clicks: bool) -> Vec<String> {
     let input = match audio {
         Some(a) => format!("{screen_index}:{a}"),

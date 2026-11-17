@@ -6,7 +6,7 @@ use crate::settings::VideoFormat;
 use egui::ColorImage;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -17,6 +17,7 @@ use std::time::Instant;
 pub struct Probe {
     pub duration: f32,
     pub size: [u32; 2],
+    pub has_audio: bool,
 }
 
 /// Reads duration and size from ffmpeg's description of the file.
@@ -30,7 +31,9 @@ pub fn probe(ffmpeg: &Path, file: &Path) -> Option<Probe> {
     let text = String::from_utf8_lossy(&out.stderr);
     let mut duration = None;
     let mut size = None;
+    let mut has_audio = false;
     for line in text.lines() {
+        has_audio |= line.contains("Stream #") && line.contains("Audio:");
         if let Some(i) = line.find("Duration: ") {
             let t = &line[i + 10..];
             let t = t.split(',').next().unwrap_or("");
@@ -52,7 +55,7 @@ pub fn probe(ffmpeg: &Path, file: &Path) -> Option<Probe> {
             }
         }
     }
-    Some(Probe { duration: duration?, size: size? })
+    Some(Probe { duration: duration?, size: size?, has_audio })
 }
 
 pub struct VideoView {
@@ -69,14 +72,17 @@ pub struct VideoView {
     pub tex: Option<egui::TextureHandle>,
     generation: Arc<AtomicU64>,
     play_started: Option<(Instant, f32)>,
+    has_audio: bool,
+    /// The ffmpeg that plays the sound while the picture plays.
+    sound: Option<Child>,
 }
 
 impl VideoView {
     pub fn new(path: PathBuf, ffmpeg: Option<PathBuf>, name: String, fallback_duration: f32) -> Self {
         let pr = ffmpeg.as_deref().and_then(|f| probe(f, &path));
-        let (duration, size) = match &pr {
-            Some(p) => (p.duration, p.size),
-            None => (fallback_duration, [0, 0]),
+        let (duration, size, has_audio) = match &pr {
+            Some(p) => (p.duration, p.size, p.has_audio),
+            None => (fallback_duration, [0, 0], false),
         };
         let max_w = 1280u32;
         let preview_size = if size[0] > max_w {
@@ -99,6 +105,8 @@ impl VideoView {
             tex: None,
             generation: Arc::new(AtomicU64::new(0)),
             play_started: None,
+            has_audio,
+            sound: None,
         }
     }
 
@@ -136,6 +144,34 @@ impl VideoView {
     pub fn stop(&mut self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
         self.play_started = None;
+        self.stop_sound();
+    }
+
+    fn stop_sound(&mut self) {
+        if let Some(mut c) = self.sound.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
+
+    /// Plays the sound from `from` for `secs` seconds, next to the picture.
+    fn play_sound(&mut self, from: f32, secs: f32) {
+        self.stop_sound();
+        let Some(ffmpeg) = &self.ffmpeg else { return };
+        if !self.has_audio {
+            return;
+        }
+        self.sound = Command::new(ffmpeg)
+            .args(["-hide_banner", "-loglevel", "error", "-re", "-protocol_whitelist", "file"])
+            .args(["-ss", &format!("{from:.3}"), "-i"])
+            .arg(&self.path)
+            .args(["-t", &format!("{:.3}", secs.max(0.05)), "-vn"])
+            .args(crate::platform::sound_output_args())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok();
     }
 
     pub fn play(&mut self, ctx: &egui::Context) {
@@ -147,6 +183,7 @@ impl VideoView {
         }
         self.play_started = Some((Instant::now(), self.pos));
         self.decode(ctx, self.pos, Some(self.trim.1 - self.pos));
+        self.play_sound(self.pos, self.trim.1 - self.pos);
     }
 
     /// Shows the single frame at `t`.
@@ -272,6 +309,7 @@ pub struct ExportOptions {
 
 impl Drop for VideoView {
     fn drop(&mut self) {
-        self.generation.fetch_add(1, Ordering::SeqCst);
+        // Ends the picture thread and the sound.
+        self.stop();
     }
 }
