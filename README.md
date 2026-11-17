@@ -7,7 +7,8 @@ Runs on Apple Silicon Macs. Tested on macOS 27.
 
 ## Build
 
-Needs Rust (https://rustup.rs) and the Xcode command line tools.
+Needs Rust (https://rustup.rs) and the Xcode command line tools. `bundle.sh` also needs
+cargo-about: `cargo install --locked --features cli cargo-about`.
 
 ```bash
 ./scripts/build-ffmpeg.sh  # once: build the ffmpeg that ships with the app (a few minutes)
@@ -45,3 +46,11 @@ The app is not notarized by Apple, so macOS blocks it the first time. Open it on
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+The app also ships ffmpeg (LGPL 2.1+) and the code of many Rust crates. Their licenses, the
+ffmpeg source, its build options and our patch are listed in
+[THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). `scripts/notices.sh` writes that file from
+`Cargo.lock` and the ffmpeg build; `bundle.sh` runs it and copies it, `LICENSE`, the patch and
+the ffmpeg build script into `LightSnap.app/Contents/Resources/`.
+
+Check the dependencies for known security issues with `cargo audit`.

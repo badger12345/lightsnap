@@ -1,0 +1,22 @@
+# cargo-about: which crate licenses are fine to ship. scripts/notices.sh uses this.
+# A dual-licensed crate is listed under the first license from this list it allows.
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "BSL-1.0",
+    "MPL-2.0",
+    "OFL-1.1",
+    "Ubuntu-font-1.0",
+]
+# Only what goes into the app binary.
+targets = ["aarch64-apple-darwin"]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+# Skip LightSnap itself (publish = false); its license is LICENSE.
+private = { ignore = true }

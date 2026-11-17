@@ -18,6 +18,9 @@ if [ ! -x build/ffmpeg/bin/ffmpeg ]; then
     ./scripts/build-ffmpeg.sh
 fi
 
+echo "==> Writing the license notices"
+./scripts/notices.sh
+
 echo "==> Building LightSnap $VERSION ($TARGET)"
 MACOSX_DEPLOYMENT_TARGET=13.0 cargo build --release --target "$TARGET"
 
@@ -35,6 +38,11 @@ cp build/ffmpeg/bin/ffmpeg "$APP/Contents/MacOS/ffmpeg"
 sed "s/@VERSION@/$VERSION/g" macos/Info.plist > "$APP/Contents/Info.plist"
 plutil -lint -s "$APP/Contents/Info.plist"
 iconutil -c icns "$WORK/AppIcon.iconset" -o "$APP/Contents/Resources/AppIcon.icns"
+# Licenses travel with every copy of the app. The ffmpeg folder holds what the LGPL
+# asks for besides the notice: our patch and the exact build script.
+cp LICENSE THIRD_PARTY_NOTICES.txt "$APP/Contents/Resources/"
+mkdir -p "$APP/Contents/Resources/ffmpeg"
+cp macos/ffmpeg-*.patch scripts/build-ffmpeg.sh "$APP/Contents/Resources/ffmpeg/"
 
 if security find-identity -p codesigning | grep -qF "\"$SIGN_ID\""; then
     ID="$SIGN_ID"
