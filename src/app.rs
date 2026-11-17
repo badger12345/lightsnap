@@ -224,8 +224,6 @@ pub struct LightSnap {
     close_after_save: bool,
     pending_size: Option<Vec2>,
     pending_pos: Option<Pos2>,
-    /// The fonts, to set them again when letters got lost (see resend_lost_uploads).
-    fonts: egui::FontDefinitions,
     /// How often lost uploads were resent outside of choosing a record area.
     resent: u32,
 }
@@ -234,7 +232,7 @@ impl LightSnap {
     pub fn new(cc: &eframe::CreationContext<'_>, screenshot: Option<PathBuf>, open: Option<PathBuf>, quiet: bool, background: bool) -> Self {
         let ctx = cc.egui_ctx.clone();
         let (font, font_bytes) = crate::doc::load_font();
-        let fonts = setup_style(&ctx, font_bytes);
+        setup_style(&ctx, font_bytes);
         let settings = Settings::load();
         let (tx, rx) = channel();
 
@@ -281,7 +279,6 @@ impl LightSnap {
             close_after_save: false,
             pending_size: None,
             pending_pos: None,
-            fonts,
             resent: 0,
         };
 
@@ -394,7 +391,7 @@ impl LightSnap {
 
     /// An extra window lost a frame after drawing it, so pictures and letters sent in that
     /// frame never reached the graphics card (a black record area with missing letters).
-    /// Send them again: the screen pictures, and all letters by setting the fonts anew.
+    /// Send them again: the screen pictures, and all letters by rebuilding the fonts.
     /// A few times at most, so a window that keeps failing can't keep the app busy.
     fn resend_lost_uploads(&mut self, ctx: &egui::Context) {
         if !crate::take_uploads_lost() {
@@ -419,7 +416,10 @@ impl LightSnap {
                 scr.tex = None;
             }
         }
-        ctx.set_fonts(self.fonts.clone());
+        // Rebuild all fonts, so every letter is sent again. set_fonts would skip it (the
+        // fonts did not change); setting the glyph rasterizers always rebuilds. The list
+        // stays as it was: empty, eframe adds none on desktop.
+        ctx.set_glyph_rasterizers(Vec::new());
         // The main window is hidden; let it paint so the new letters reach the card.
         ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
     }
@@ -2671,8 +2671,7 @@ fn recent_files(dir: &Path, n: usize) -> Vec<PathBuf> {
     v.into_iter().take(n).map(|(_, p)| p).collect()
 }
 
-/// Sets fonts and colours. Returns the fonts, to set them again when letters got lost.
-fn setup_style(ctx: &egui::Context, font_bytes: Vec<u8>) -> egui::FontDefinitions {
+fn setup_style(ctx: &egui::Context, font_bytes: Vec<u8>) {
     // ⌘+ / ⌘- / ⌘0 zoom the picture, not the whole interface.
     ctx.options_mut(|o| o.zoom_with_keyboard = false);
     let mut fonts = egui::FontDefinitions::default();
@@ -2685,7 +2684,7 @@ fn setup_style(ctx: &egui::Context, font_bytes: Vec<u8>) -> egui::FontDefinition
             fonts.families.entry(fam).or_default().push("symbols".into());
         }
     }
-    ctx.set_fonts(fonts.clone());
+    ctx.set_fonts(fonts);
 
     ctx.set_theme(egui::Theme::Dark);
     ctx.all_styles_mut(|style| {
@@ -2712,7 +2711,6 @@ fn setup_style(ctx: &egui::Context, font_bytes: Vec<u8>) -> egui::FontDefinition
             };
         }
     });
-    fonts
 }
 
 // ---------------------------------------------------------------- menu bar
