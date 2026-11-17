@@ -57,7 +57,7 @@ cd "$SRC"
 
 echo "==> Configuring"
 ./configure \
-    --prefix="$OUT" \
+    --prefix=/usr/local \
     --arch=arm64 --target-os=darwin --cc=clang \
     --extra-cflags="-mmacosx-version-min=13.0" \
     --extra-ldflags="-mmacosx-version-min=13.0" \
@@ -79,7 +79,10 @@ echo "==> Configuring"
 
 echo "==> Building (takes a few minutes)"
 make -j"$(sysctl -n hw.ncpu)" > "$ROOT/ffmpeg-make.log" 2>&1 || { tail -30 "$ROOT/ffmpeg-make.log"; exit 1; }
-make install > /dev/null
+# Only the program is needed. No "make install": the prefix is a neutral placeholder,
+# because ffmpeg stores it in the binary (-buildconf) and a local path does not belong there.
+mkdir -p "$OUT/bin"
+install -m 755 ffmpeg "$OUT/bin/ffmpeg"
 
 # Keep the exact configure line for the license notice.
 "$OUT/bin/ffmpeg" -hide_banner -buildconf > "$OUT/BUILDCONF.txt"

@@ -41,9 +41,9 @@ Changes by LightSnap
 Build
 -----
   build-ffmpeg.sh downloads the tarball above, checks it, applies the patch
-  and builds with the following options (from "ffmpeg -buildconf";
-  --prefix is the local install folder and does not change the program):
+  and builds with the following options (from "ffmpeg -buildconf"):
 
+    --prefix=/usr/local
     --arch=arm64
     --target-os=darwin
     --cc=clang

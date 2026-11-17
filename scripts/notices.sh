@@ -70,12 +70,10 @@ Changes by LightSnap
 Build
 -----
   build-ffmpeg.sh downloads the tarball above, checks it, applies the patch
-  and builds with the following options (from "ffmpeg -buildconf";
-  --prefix is the local install folder and does not change the program):
+  and builds with the following options (from "ffmpeg -buildconf"):
 
 TXT
-# Drop the --prefix line: it is a local path of the build machine.
-grep -E '^ +--' "$BUILDCONF" | grep -v -- "--prefix=" | sed 's/^ */    /'
+grep -E '^ +--' "$BUILDCONF" | sed 's/^ */    /'
 cat <<'TXT'
 
   Built for macOS 13 or later on Apple Silicon (arm64), linked statically

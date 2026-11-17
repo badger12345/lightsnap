@@ -21,6 +21,18 @@ fi
 echo "==> Writing the license notices"
 ./scripts/notices.sh
 
+# Keep local paths out of the binary (panic messages carry source paths). The last
+# matching rule wins, so the catch-all for $HOME comes first. Encoded flags are split
+# on \x1f, not on spaces, so folders with spaces in their name work.
+CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+CARGO_ENCODED_RUSTFLAGS=$(printf '%s\x1f' \
+    "--remap-path-prefix=$HOME=/home" \
+    "--remap-path-prefix=$RUSTUP_HOME=/rustup" \
+    "--remap-path-prefix=$CARGO_HOME=/cargo" \
+    "--remap-path-prefix=$PWD=/lightsnap")
+export CARGO_ENCODED_RUSTFLAGS="${CARGO_ENCODED_RUSTFLAGS%$'\x1f'}"
+
 echo "==> Building LightSnap $VERSION ($TARGET)"
 MACOSX_DEPLOYMENT_TARGET=13.0 cargo build --release --target "$TARGET"
 
@@ -43,6 +55,13 @@ iconutil -c icns "$WORK/AppIcon.iconset" -o "$APP/Contents/Resources/AppIcon.icn
 cp LICENSE THIRD_PARTY_NOTICES.txt "$APP/Contents/Resources/"
 mkdir -p "$APP/Contents/Resources/ffmpeg"
 cp macos/ffmpeg-*.patch scripts/build-ffmpeg.sh "$APP/Contents/Resources/ffmpeg/"
+
+# Fail if a local path got into a binary.
+for bin in "$APP/Contents/MacOS/"*; do
+    if strings -a "$bin" | grep -qF -e "$HOME" -e "$PWD"; then
+        echo "Local path found in $bin"; exit 1
+    fi
+done
 
 if security find-identity -p codesigning | grep -qF "\"$SIGN_ID\""; then
     ID="$SIGN_ID"
