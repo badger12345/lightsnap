@@ -2,3 +2,4 @@ target/
 shots/
 dist/
 build/
+.DS_Store
