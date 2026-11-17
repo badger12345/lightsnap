@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts"] }
 egui = "0.37"
+log = "0.4"
 epaint_default_fonts = "0.37"
 winit = { version = "0.30.13", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }

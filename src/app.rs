@@ -920,6 +920,13 @@ impl LightSnap {
                                     bounds: Rect::from_min_size(Pos2::ZERO, self.monitor),
                                     scale: rgba.width() as f32 / self.monitor.x.max(1.0),
                                 });
+                                log::info!(
+                                    "record area: screen {i} at {:?} scale {} picture {}x{}",
+                                    d.bounds,
+                                    d.scale,
+                                    rgba.width(),
+                                    rgba.height()
+                                );
                                 screens.push(SelScreen {
                                     bounds: d.bounds,
                                     scale: d.scale,

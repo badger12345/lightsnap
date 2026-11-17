@@ -3,6 +3,7 @@
 #
 # License: LGPL 2.1 or later. No --enable-gpl, no --enable-nonfree, no x264.
 # Video is encoded with Apple's h264_videotoolbox, audio with aac_at.
+# Patches from macos/ffmpeg-*.patch are applied (see each file for why).
 # Only what LightSnap uses is built in: screen capture (avfoundation), sound output
 # for the player (audiotoolbox), mp4/mov/gif in and out, a handful of filters,
 # and local files only (no network).
@@ -47,6 +48,11 @@ fi
 
 rm -rf "$SRC" "$OUT"
 tar -xJf "$TARBALL" -C "$ROOT"
+# Our changes to ffmpeg (they are LGPL too and ship with the source).
+for p in macos/ffmpeg-*.patch; do
+    echo "==> Applying $p"
+    patch -p1 -s -d "$SRC" < "$p"
+done
 cd "$SRC"
 
 echo "==> Configuring"

@@ -17,6 +17,7 @@ use std::path::PathBuf;
 
 fn main() -> eframe::Result<()> {
     install_crash_log();
+    install_warning_log();
     let args: Vec<String> = std::env::args().collect();
     let screenshot = args
         .iter()
@@ -87,7 +88,9 @@ fn install_crash_log() {
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         if EXPECTED_PANIC.with(|c| c.get()) {
-            return; // handled by show_immediate
+            // Handled by show_immediate; note it so a window that misbehaves can be traced.
+            log::warn!(target: "lightsnap", "skipped a frame of an extra window: {info}");
+            return;
         }
         if let Some(dir) = platform::log_dir() {
             let _ = std::fs::create_dir_all(&dir);
@@ -103,6 +106,49 @@ fn install_crash_log() {
         }
         default(info);
     }));
+}
+
+/// Warnings and errors from LightSnap and the GUI libraries (plus LightSnap's own notes)
+/// go to lightsnap.log in the
+/// log folder (see `platform::log_dir`). The file starts over when it passes 1 MB.
+struct WarningLog(std::sync::Mutex<Option<std::fs::File>>);
+
+impl log::Log for WarningLog {
+    fn enabled(&self, m: &log::Metadata) -> bool {
+        m.level() <= log::Level::Warn || (m.level() <= log::Level::Info && m.target().starts_with("lightsnap"))
+    }
+    fn log(&self, r: &log::Record) {
+        if !self.enabled(r.metadata()) {
+            return;
+        }
+        if let Ok(mut f) = self.0.lock() {
+            if let Some(f) = f.as_mut() {
+                use std::io::Write;
+                let _ = writeln!(
+                    f,
+                    "{} {} {}: {}",
+                    chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
+                    r.level(),
+                    r.target(),
+                    r.args()
+                );
+            }
+        }
+    }
+    fn flush(&self) {}
+}
+
+fn install_warning_log() {
+    let Some(dir) = platform::log_dir() else { return };
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("lightsnap.log");
+    if std::fs::metadata(&path).map(|m| m.len() > 1_000_000).unwrap_or(false) {
+        let _ = std::fs::remove_file(&path);
+    }
+    let file = std::fs::OpenOptions::new().create(true).append(true).open(&path).ok();
+    if log::set_boxed_logger(Box::new(WarningLog(std::sync::Mutex::new(file)))).is_ok() {
+        log::set_max_level(log::LevelFilter::Info);
+    }
 }
 
 thread_local! {
