@@ -155,22 +155,44 @@ thread_local! {
     static EXPECTED_PANIC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+static UPLOADS_LOST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// True once after an extra window lost a frame that had already been drawn (see
+/// show_immediate). Pictures and letters sent to the graphics card in that frame are
+/// gone and have to be sent again.
+pub fn take_uploads_lost() -> bool {
+    UPLOADS_LOST.swap(false, std::sync::atomic::Ordering::SeqCst)
+}
+
 /// Shows an extra window (immediate viewport). While the main window is hidden,
 /// eframe sometimes can't create a brand-new window in that frame and egui then stops
 /// the app. Here that frame is simply skipped: the window gets created right after it,
 /// and the next frame draws it.
+///
+/// A fresh window can also fail a bit later, while drawing ("Unable to create Texture
+/// object": OpenGL is not ready for it yet). Then the pictures and letters of that frame
+/// never reach the graphics card; take_uploads_lost() reports it so they can be resent.
 pub fn show_immediate<T: Default>(
     ctx: &egui::Context,
     id: egui::ViewportId,
     builder: egui::ViewportBuilder,
-    cb: impl FnMut(&mut egui::Ui, egui::ViewportClass) -> T,
+    mut cb: impl FnMut(&mut egui::Ui, egui::ViewportClass) -> T,
 ) -> T {
+    let mut drawn = false;
     EXPECTED_PANIC.with(|c| c.set(true));
-    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ctx.show_viewport_immediate(id, builder, cb)));
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ctx.show_viewport_immediate(id, builder, |ui, class| {
+            drawn = true;
+            cb(ui, class)
+        })
+    }));
     EXPECTED_PANIC.with(|c| c.set(false));
     match r {
         Ok(v) => v,
         Err(_) => {
+            if drawn {
+                UPLOADS_LOST.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
             ctx.request_repaint_after(std::time::Duration::from_millis(16));
             T::default()
         }

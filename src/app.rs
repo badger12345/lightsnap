@@ -133,7 +133,8 @@ enum SelDrag {
 struct SelScreen {
     bounds: Rect,
     scale: f32,
-    img: Option<ColorImage>,
+    /// Kept while choosing, so the picture can be sent to the graphics card again.
+    img: Option<Arc<ColorImage>>,
     tex: Option<TextureHandle>,
 }
 
@@ -147,6 +148,8 @@ struct Select {
     drag: Option<SelDrag>,
     settings_open: bool,
     focused: bool,
+    /// How often lost pictures and letters were sent again (see show_immediate).
+    resent: u32,
 }
 
 #[derive(Default)]
@@ -221,13 +224,17 @@ pub struct LightSnap {
     close_after_save: bool,
     pending_size: Option<Vec2>,
     pending_pos: Option<Pos2>,
+    /// The fonts, to set them again when letters got lost (see resend_lost_uploads).
+    fonts: egui::FontDefinitions,
+    /// How often lost uploads were resent outside of choosing a record area.
+    resent: u32,
 }
 
 impl LightSnap {
     pub fn new(cc: &eframe::CreationContext<'_>, screenshot: Option<PathBuf>, open: Option<PathBuf>, quiet: bool, background: bool) -> Self {
         let ctx = cc.egui_ctx.clone();
         let (font, font_bytes) = crate::doc::load_font();
-        setup_style(&ctx, font_bytes);
+        let fonts = setup_style(&ctx, font_bytes);
         let settings = Settings::load();
         let (tx, rx) = channel();
 
@@ -274,6 +281,8 @@ impl LightSnap {
             close_after_save: false,
             pending_size: None,
             pending_pos: None,
+            fonts,
+            resent: 0,
         };
 
         // The menu-bar icon and global shortcuts are skipped for a quick check picture.
@@ -381,6 +390,38 @@ impl LightSnap {
         ctx.send_viewport_cmd(ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(ViewportCommand::Focus);
         self.visible = true;
+    }
+
+    /// An extra window lost a frame after drawing it, so pictures and letters sent in that
+    /// frame never reached the graphics card (a black record area with missing letters).
+    /// Send them again: the screen pictures, and all letters by setting the fonts anew.
+    /// A few times at most, so a window that keeps failing can't keep the app busy.
+    fn resend_lost_uploads(&mut self, ctx: &egui::Context) {
+        if !crate::take_uploads_lost() {
+            return;
+        }
+        let tries = match &mut self.select {
+            Some(sel) => {
+                sel.resent += 1;
+                sel.resent
+            }
+            None => {
+                self.resent += 1;
+                self.resent
+            }
+        };
+        log::warn!(target: "lightsnap", "an extra window lost a frame; resending (try {tries})");
+        if (self.select.is_some() && tries > 3) || tries > 10 {
+            return;
+        }
+        if let Some(sel) = &mut self.select {
+            for scr in &mut sel.screens {
+                scr.tex = None;
+            }
+        }
+        ctx.set_fonts(self.fonts.clone());
+        // The main window is hidden; let it paint so the new letters reach the card.
+        ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
     }
 
     fn hide_window(&mut self, ctx: &egui::Context) {
@@ -930,10 +971,10 @@ impl LightSnap {
                                 screens.push(SelScreen {
                                     bounds: d.bounds,
                                     scale: d.scale,
-                                    img: Some(ColorImage::from_rgba_unmultiplied(
+                                    img: Some(Arc::new(ColorImage::from_rgba_unmultiplied(
                                         [rgba.width() as usize, rgba.height() as usize],
                                         rgba.as_raw(),
-                                    )),
+                                    ))),
                                     tex: None,
                                 });
                             }
@@ -955,6 +996,7 @@ impl LightSnap {
                                 drag: None,
                                 settings_open: false,
                                 focused: false,
+                                resent: 0,
                             });
                             ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
                         }
@@ -1706,7 +1748,7 @@ impl LightSnap {
         let settings = &mut self.settings;
         let devices = &self.devices;
         let has_ff = self.ffmpeg.is_some();
-        let Select { screens, rect, before_full, drag, settings_open, focused } = sel;
+        let Select { screens, rect, before_full, drag, settings_open, focused, .. } = sel;
         let all = screens.iter().fold(Rect::NOTHING, |a, s| a.union(s.bounds));
         let bounds_list: Vec<Rect> = screens.iter().map(|s| s.bounds).collect();
         // The screen that holds the middle of the area gets the Record button.
@@ -1744,8 +1786,8 @@ impl LightSnap {
                     any_focus_sent = true;
                     ctx.send_viewport_cmd(ViewportCommand::Focus);
                 }
-                if let Some(img) = scr.img.take() {
-                    scr.tex = Some(ctx.load_texture(format!("select_snapshot_{si}"), img, TextureOptions::LINEAR));
+                if let (None, Some(img)) = (&scr.tex, &scr.img) {
+                    scr.tex = Some(ctx.load_texture(format!("select_snapshot_{si}"), img.clone(), TextureOptions::LINEAR));
                 }
                 let offset = ctx
                     .input(|i| i.viewport().inner_rect.map(|r| r.min.to_vec2()))
@@ -2096,6 +2138,7 @@ impl eframe::App for LightSnap {
             self.visible = true;
         }
 
+        self.resend_lost_uploads(ctx);
         self.handle_events(ctx);
         if test_env("LS_TEST_AUTOREC") {
             if let Some(r) = &self.recording {
@@ -2628,7 +2671,8 @@ fn recent_files(dir: &Path, n: usize) -> Vec<PathBuf> {
     v.into_iter().take(n).map(|(_, p)| p).collect()
 }
 
-fn setup_style(ctx: &egui::Context, font_bytes: Vec<u8>) {
+/// Sets fonts and colours. Returns the fonts, to set them again when letters got lost.
+fn setup_style(ctx: &egui::Context, font_bytes: Vec<u8>) -> egui::FontDefinitions {
     // ⌘+ / ⌘- / ⌘0 zoom the picture, not the whole interface.
     ctx.options_mut(|o| o.zoom_with_keyboard = false);
     let mut fonts = egui::FontDefinitions::default();
@@ -2641,7 +2685,7 @@ fn setup_style(ctx: &egui::Context, font_bytes: Vec<u8>) {
             fonts.families.entry(fam).or_default().push("symbols".into());
         }
     }
-    ctx.set_fonts(fonts);
+    ctx.set_fonts(fonts.clone());
 
     ctx.set_theme(egui::Theme::Dark);
     ctx.all_styles_mut(|style| {
@@ -2668,6 +2712,7 @@ fn setup_style(ctx: &egui::Context, font_bytes: Vec<u8>) {
             };
         }
     });
+    fonts
 }
 
 // ---------------------------------------------------------------- menu bar
