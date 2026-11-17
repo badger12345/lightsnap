@@ -9,7 +9,6 @@ use egui::{
     Align, Align2, Color32, FontId, Key, Layout, Rect, Sense, Stroke, Ui, Vec2, ViewportBuilder, ViewportCommand,
     ViewportId, pos2, vec2,
 };
-use std::path::PathBuf;
 
 const BG: Color32 = Color32::from_rgb(34, 34, 36);
 const HEADER: Color32 = Color32::from_rgb(42, 42, 44);
@@ -257,9 +256,9 @@ impl Prefs {
         });
         separator(ui);
         row(ui, "", |ui| {
-            let mut on = login_item_enabled();
+            let mut on = crate::platform::login_item_enabled();
             if ui.checkbox(&mut on, "Launch at login").changed() {
-                set_login_item(on);
+                crate::platform::set_login_item(on);
             }
         });
         ui.vertical_centered(|ui| {
@@ -566,51 +565,4 @@ pub fn key_to_code(k: Key) -> Option<String> {
         }
         .to_string(),
     )
-}
-
-// ---------------------------------------------------------------- launch at login
-
-const AGENT_LABEL: &str = "app.lightsnap.login";
-
-fn agent_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join("Library/LaunchAgents").join(format!("{AGENT_LABEL}.plist")))
-}
-
-pub fn login_item_enabled() -> bool {
-    agent_path().is_some_and(|p| p.is_file())
-}
-
-/// Starts LightSnap (in the menu bar, window hidden) when the person logs in.
-pub fn set_login_item(on: bool) {
-    let Some(path) = agent_path() else { return };
-    if !on {
-        let _ = std::fs::remove_file(&path);
-        return;
-    }
-    let Ok(exe) = std::env::current_exe() else { return };
-    let exe = exe.display().to_string().replace('&', "&amp;").replace('<', "&lt;");
-    let plist = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>{AGENT_LABEL}</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>{exe}</string>
-        <string>--background</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>ProcessType</key>
-    <string>Interactive</string>
-</dict>
-</plist>
-"#
-    );
-    if let Some(d) = path.parent() {
-        let _ = std::fs::create_dir_all(d);
-    }
-    let _ = std::fs::write(&path, plist);
 }

@@ -1,7 +1,8 @@
 //! Screen video recording. Uses ffmpeg when it is installed (frame rate, quality,
-//! pause and audio work then), otherwise macOS's own `screencapture -v`.
+//! pause and audio work then), otherwise the system's own recorder (see `platform`).
 //! Recording runs in a separate process; the app only shows a timer.
 
+use crate::platform::{self, Devices};
 use crate::settings::Quality;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -9,61 +10,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 pub fn find_ffmpeg() -> Option<PathBuf> {
-    let mut candidates: Vec<PathBuf> = vec![
-        "/opt/homebrew/bin/ffmpeg".into(),
-        "/usr/local/bin/ffmpeg".into(),
-        "/opt/local/bin/ffmpeg".into(),
-    ];
-    if let Some(path) = std::env::var_os("PATH") {
-        candidates.extend(std::env::split_paths(&path).map(|d| d.join("ffmpeg")));
-    }
-    candidates.into_iter().find(|p| p.is_file())
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct Devices {
-    /// avfoundation index of the main screen ("Capture screen 0").
-    pub screen_index: Option<usize>,
-    /// avfoundation index of "Capture screen N", for every screen N.
-    pub screens: Vec<(usize, usize)>,
-    pub audio_inputs: Vec<String>,
-}
-
-/// Asks ffmpeg which screens and microphones exist. Takes well under a second.
-pub fn list_devices(ffmpeg: &Path) -> Devices {
-    let out = Command::new(ffmpeg)
-        .args(["-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""])
-        .stdin(Stdio::null())
-        .output();
-    let mut devices = Devices::default();
-    let Ok(out) = out else { return devices };
-    let text = String::from_utf8_lossy(&out.stderr);
-    let mut in_audio = false;
-    for line in text.lines() {
-        if line.contains("video devices:") {
-            in_audio = false;
-            continue;
-        }
-        if line.contains("audio devices:") {
-            in_audio = true;
-            continue;
-        }
-        // Lines look like: "[AVFoundation indev @ 0x..] [1] Capture screen 0"
-        let Some(pos) = line.rfind("] [") else { continue };
-        let rest = &line[pos + 3..];
-        let Some(close) = rest.find(']') else { continue };
-        let Ok(idx) = rest[..close].parse::<usize>() else { continue };
-        let name = rest[close + 1..].trim().to_string();
-        if in_audio {
-            devices.audio_inputs.push(name);
-        } else if let Some(n) = name.strip_prefix("Capture screen ").and_then(|n| n.trim().parse::<usize>().ok()) {
-            devices.screens.push((n, idx));
-            if n == 0 {
-                devices.screen_index = Some(idx);
-            }
-        }
-    }
-    devices
+    platform::ffmpeg_candidates().into_iter().find(|p| p.is_file())
 }
 
 #[derive(Clone, Debug)]
@@ -121,7 +68,7 @@ impl Recorder {
             paused_total: Duration::ZERO,
             paused_at: None,
             error: None,
-            log: crate::capture::temp_file("rec", "log"),
+            log: platform::temp_file("rec", "log"),
         };
         rec.start_segment()?;
         Ok(rec)
@@ -149,7 +96,7 @@ impl Recorder {
         let [x, y, w, h] = o.rect_pt;
         let child = match &self.backend {
             Backend::Ffmpeg { exe, screen_index } => {
-                let seg = crate::capture::temp_file("rec", "mp4");
+                let seg = platform::temp_file("rec", "mp4");
                 let s = o.scale.max(1.0);
                 let even = |v: f32| ((v * s).round() as i64 / 2 * 2).max(2);
                 let (px, py, pw, ph) = (
@@ -162,17 +109,9 @@ impl Recorder {
                 if o.quality == Quality::Low && pw >= 640 {
                     filter.push_str(",scale=trunc(iw/4)*2:trunc(ih/4)*2");
                 }
-                let input = match &o.audio {
-                    Some(a) => format!("{screen_index}:{a}"),
-                    None => format!("{screen_index}:none"),
-                };
                 let mut cmd = Command::new(exe);
-                cmd.args(["-hide_banner", "-loglevel", "error", "-y", "-f", "avfoundation"])
-                    .args(["-capture_cursor", if o.cursor { "1" } else { "0" }])
-                    .args(["-capture_mouse_clicks", if o.clicks { "1" } else { "0" }])
-                    .args(["-framerate", &o.fps.to_string()])
-                    .args(["-pixel_format", "nv12"])
-                    .args(["-i", &input])
+                cmd.args(["-hide_banner", "-loglevel", "error", "-y"])
+                    .args(platform::ffmpeg_input_args(*screen_index, o.audio.as_deref(), o.fps, o.cursor, o.clicks))
                     .args(["-vf", &filter])
                     .args(["-r", &o.fps.to_string()])
                     .args(["-c:v", "libx264", "-preset", "veryfast"])
@@ -185,27 +124,9 @@ impl Recorder {
                 cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(self.log_sink()).spawn()
             }
             Backend::ScreenCapture => {
-                let seg = crate::capture::temp_file("rec", "mov");
-                let mut cmd = Command::new("/usr/sbin/screencapture");
-                let [gx, gy, gw, gh] = o.rect_global;
+                let seg = platform::temp_file("rec", platform::FALLBACK_EXT);
                 let _ = (x, y, w, h);
-                cmd.args(["-v", "-x", "-R"]).arg(format!(
-                    "{},{},{},{}",
-                    gx.round() as i64,
-                    gy.round() as i64,
-                    gw.round() as i64,
-                    gh.round() as i64
-                ));
-                if o.cursor {
-                    cmd.arg("-C");
-                }
-                if o.clicks {
-                    cmd.arg("-k");
-                }
-                if o.audio.is_some() {
-                    cmd.arg("-g");
-                }
-                cmd.arg(&seg);
+                let mut cmd = platform::fallback_record_command(o.rect_global, o.cursor, o.clicks, o.audio.is_some(), &seg);
                 self.segments.push(seg);
                 cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(self.log_sink()).spawn()
             }
@@ -253,15 +174,7 @@ impl Recorder {
                     let _ = stdin.flush();
                 }
             }
-            Backend::ScreenCapture => {
-                // screencapture stops on a key press or Ctrl-C.
-                if let Some(mut stdin) = child.stdin.take() {
-                    let _ = stdin.write_all(b"\n");
-                }
-                let _ = Command::new("/bin/kill")
-                    .args(["-INT", &child.id().to_string()])
-                    .status();
-            }
+            Backend::ScreenCapture => platform::stop_fallback(&mut child),
         }
         let deadline = Instant::now() + Duration::from_secs(8);
         loop {
@@ -326,7 +239,7 @@ impl Recorder {
             move_file(&segments[0], &dest)?;
             return Ok(dest);
         };
-        let list = crate::capture::temp_file("list", "txt");
+        let list = platform::temp_file("list", "txt");
         let body: String = segments
             .iter()
             .map(|p| format!("file '{}'\n", p.display().to_string().replace('\'', "'\\''")))
@@ -380,7 +293,7 @@ mod tests {
     #[ignore]
     fn record_pause_finish() {
         let ff = find_ffmpeg().expect("ffmpeg");
-        let devices = list_devices(&ff);
+        let devices = platform::list_devices(&ff);
         assert!(devices.screen_index.is_some());
         let opts = RecordOptions {
             rect_pt: [50.0, 50.0, 300.0, 200.0],

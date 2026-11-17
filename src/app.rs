@@ -1,10 +1,11 @@
 //! The main window, the menu-bar icon, global shortcuts and the capture/record flow.
 
-use crate::capture::{self, CaptureKind};
+use crate::platform::{self, CaptureKind};
 use crate::doc::Style;
 use crate::editor::{Editor, ResizeDlg, Tool};
 use crate::icons::{self, Icon};
-use crate::record::{self, Devices, RecordOptions, Recorder};
+use crate::platform::Devices;
+use crate::record::{self, RecordOptions, Recorder};
 use crate::settings::{AfterCapture, ImageFormat, Quality, Settings};
 use crate::video::VideoView;
 use ab_glyph::FontVec;
@@ -396,8 +397,8 @@ impl LightSnap {
             }
             Action::Show => self.show_window(ctx),
             Action::OpenClipboard => {
-                let tmp = capture::temp_file("clip", "png");
-                if capture::clipboard_png_to_file(&tmp) {
+                let tmp = platform::temp_file("clip", "png");
+                if platform::clipboard_png_to_file(&tmp) {
                     match image::open(&tmp) {
                         Ok(img) => {
                             let ed = Editor::new(img.to_rgba8(), self.settings.make_name("Screenshot"), self.native_ppp);
@@ -437,7 +438,7 @@ impl LightSnap {
             }
             Action::OpenFolder => {
                 let _ = std::fs::create_dir_all(&self.settings.save_dir);
-                capture::open_path(&self.settings.save_dir);
+                platform::open_path(&self.settings.save_dir);
             }
             Action::Settings => {
                 self.prefs.open();
@@ -484,7 +485,7 @@ impl LightSnap {
             if let Some(ff) = self.ffmpeg.clone() {
                 let slot = self.devices.clone();
                 std::thread::spawn(move || {
-                    let d = record::list_devices(&ff);
+                    let d = platform::list_devices(&ff);
                     if let Ok(mut s) = slot.lock() {
                         *s = Some(d);
                     }
@@ -500,9 +501,9 @@ impl LightSnap {
             }
             let r = if for_record {
                 // A frozen picture of every screen to choose the area on.
-                capture::capture_all_screens(crate::displays::list().len())
+                platform::capture_all_screens(platform::displays().len())
             } else {
-                capture::run_capture(kind, sound).into_iter().collect()
+                platform::run_capture(kind, sound).into_iter().collect()
             };
             let _ = tx.send(r);
             ctx2.request_repaint();
@@ -521,7 +522,7 @@ impl LightSnap {
                 self.ed = None;
                 self.video = Some(v);
             } else {
-                capture::open_path(p);
+                platform::open_path(p);
             }
             return;
         }
@@ -623,7 +624,7 @@ impl LightSnap {
             }
             AfterCapture::SaveAndCopy => {
                 if let Some(dest) = saved {
-                    notify("Saved", &dest.display().to_string());
+                    platform::notify("Saved", &dest.display().to_string());
                 }
                 if show_after {
                     self.show_window(ctx);
@@ -664,10 +665,10 @@ impl LightSnap {
         let gen_now = self.clip_gen.clone();
         std::thread::spawn(move || {
             let img = crate::doc::render(&doc, &font, None);
-            let tmp = capture::temp_file("autocopy", "png");
+            let tmp = platform::temp_file("autocopy", "png");
             // A newer edit wins: skip this one if another copy was started meanwhile.
             if img.save(&tmp).is_ok() && gen_now.load(std::sync::atomic::Ordering::SeqCst) == gen_id {
-                capture::set_clipboard(if image { Some(&tmp) } else { None }, tiff, saved.as_deref());
+                platform::set_clipboard(if image { Some(&tmp) } else { None }, tiff, saved.as_deref());
             }
             let _ = std::fs::remove_file(tmp);
         });
@@ -678,7 +679,7 @@ impl LightSnap {
         let image = if self.settings.copy_image { Some(png) } else { None };
         let path = if self.settings.copy_path { saved } else { None };
         let tiff = self.settings.clip_format == crate::settings::ClipFormat::Tiff;
-        capture::set_clipboard(image, tiff, path)
+        platform::set_clipboard(image, tiff, path)
     }
 
     fn save_picture(&mut self, save_as: bool) -> Option<PathBuf> {
@@ -727,7 +728,7 @@ impl LightSnap {
                 if close {
                     self.ed = None;
                     self.close_after_save = true;
-                    notify("Saved", &short_path(&dest));
+                    platform::notify("Saved", &short_path(&dest));
                 }
                 Some(dest)
             }
@@ -745,7 +746,7 @@ impl LightSnap {
         let img = ed.flatten(&font);
         // The path needs a saved file; save first (the editor stays open).
         let saved = if self.settings.copy_path { self.save_picture_ex(false, false) } else { None };
-        let tmp = capture::temp_file("copy", "png");
+        let tmp = platform::temp_file("copy", "png");
         if img.save(&tmp).is_ok() && self.copy_file_to_clipboard(&tmp, saved.as_deref()) {
             self.toast("Copied to clipboard", saved);
         } else {
@@ -759,13 +760,9 @@ impl LightSnap {
         let Some(ed) = self.ed.as_mut() else { return };
         ed.commit_text();
         let img = ed.flatten(&font);
-        let tmp = capture::temp_file(&crate::settings::sanitize(&ed.name), "png");
+        let tmp = platform::temp_file(&crate::settings::sanitize(&ed.name), "png");
         if img.save(&tmp).is_ok() {
-            let _ = std::process::Command::new("/usr/bin/open")
-                .arg("-a")
-                .arg(&self.settings.external_editor)
-                .arg(&tmp)
-                .spawn();
+            platform::open_with(&self.settings.external_editor, &tmp);
         }
     }
 
@@ -787,7 +784,7 @@ impl LightSnap {
         if !v.is_trimmed() && dir == self.settings.save_dir {
             if let Some(saved) = v.saved.clone().filter(|p| p.extension().is_some_and(|e| e == ext.as_str())) {
                 if then_copy {
-                    capture::copy_file_ref(&saved);
+                    platform::copy_file_ref(&saved);
                     self.toast("Copied the video file", Some(saved));
                 }
                 return;
@@ -819,7 +816,7 @@ impl LightSnap {
     fn finish_recording(&mut self, ctx: &egui::Context) {
         let Some(r) = self.recording.take() else { return };
         self.set_tray_recording(false);
-        let dest = capture::temp_file("screencast", "mp4");
+        let dest = platform::temp_file("screencast", "mp4");
         let (tx, rx) = channel();
         let ctx2 = ctx.clone();
         std::thread::spawn(move || {
@@ -905,12 +902,12 @@ impl LightSnap {
                 match (res.first().cloned(), for_record) {
                     (Some(p), false) => self.handle_capture(ctx, p, show_after),
                     (Some(_), true) => {
-                        let displays = crate::displays::list();
+                        let displays = platform::displays();
                         let mut screens = Vec::new();
                         for (i, p) in res.iter().enumerate() {
                             if let Ok(img) = image::open(p) {
                                 let rgba = img.to_rgba8();
-                                let d = displays.get(i).copied().unwrap_or(crate::displays::Display {
+                                let d = displays.get(i).copied().unwrap_or(platform::Display {
                                     bounds: Rect::from_min_size(Pos2::ZERO, self.monitor),
                                     scale: rgba.width() as f32 / self.monitor.x.max(1.0),
                                 });
@@ -931,7 +928,7 @@ impl LightSnap {
                             self.toast("Could not read the screen. Allow screen recording in System Settings › Privacy & Security.", None);
                         } else {
                             // Start with a frame of 75% of the screen under the mouse, centred.
-                            let mouse = crate::displays::mouse().unwrap_or(screens[0].bounds.center());
+                            let mouse = platform::mouse_position().unwrap_or(screens[0].bounds.center());
                             let si = screens.iter().position(|s| s.bounds.contains(mouse)).unwrap_or(0);
                             let b = screens[si].bounds;
                             let rect = Rect::from_center_size(b.center(), b.size() * 0.75);
@@ -997,7 +994,7 @@ impl LightSnap {
                             }
                         }
                         if self.copy_after_save {
-                            capture::copy_file_ref(&p);
+                            platform::copy_file_ref(&p);
                             self.toast("Saved and copied the video file", Some(p));
                         } else {
                             self.toast(format!("Saved to {}", short_path(&p)), Some(p));
@@ -1183,17 +1180,17 @@ impl LightSnap {
         let saved = self.ed.as_ref().and_then(|e| e.saved.clone()).or_else(|| self.video.as_ref().and_then(|v| v.saved.clone()));
         if let Some(p) = saved {
             if ui.button("Show in Finder").clicked() {
-                capture::reveal_in_finder(&p);
+                platform::reveal_path(&p);
             }
             if ui.button("Copy file path").clicked() {
-                capture::copy_text(&p.display().to_string());
+                platform::copy_text(&p.display().to_string());
                 self.toast("Copied the file path", None);
             }
         }
         if self.video.is_some() {
             if let Some(v) = &self.video {
                 if ui.button("Open in QuickTime Player").clicked() {
-                    capture::open_path(v.saved.as_ref().unwrap_or(&v.path));
+                    platform::open_path(v.saved.as_ref().unwrap_or(&v.path));
                 }
             }
         }
@@ -1709,7 +1706,7 @@ impl LightSnap {
                 })
             })
             .unwrap_or(0);
-        let mouse_i = crate::displays::mouse()
+        let mouse_i = platform::mouse_position()
             .and_then(|m| bounds_list.iter().position(|b| b.contains(m)))
             .unwrap_or(0);
         let mut out = SelectOut::None;
@@ -2199,12 +2196,12 @@ impl eframe::App for LightSnap {
                     .select
                     .as_ref()
                     .and_then(|s| {
-                        let list: Vec<crate::displays::Display> =
-                            s.screens.iter().map(|x| crate::displays::Display { bounds: x.bounds, scale: x.scale }).collect();
+                        let list: Vec<platform::Display> =
+                            s.screens.iter().map(|x| platform::Display { bounds: x.bounds, scale: x.scale }).collect();
                         if list.is_empty() {
                             return None;
                         }
-                        let i = crate::displays::index_at(&list, r.center());
+                        let i = platform::display_index_at(&list, r.center());
                         Some((i, list[i].bounds, list[i].scale))
                     })
                     .unwrap_or((0, Rect::from_min_size(Pos2::ZERO, self.monitor), self.native_ppp));
@@ -2288,7 +2285,7 @@ impl eframe::App for LightSnap {
                 ui.painter().galley(r.min + vec2(14.0, 8.0), galley, Color32::WHITE);
                 if let Some(p) = t.path.clone() {
                     if ui.interact(r, Id::new("toast"), Sense::click()).on_hover_text("Show in Finder").clicked() {
-                        capture::reveal_in_finder(&p);
+                        platform::reveal_path(&p);
                     }
                 }
             }
@@ -2610,12 +2607,6 @@ fn recent_files(dir: &Path, n: usize) -> Vec<PathBuf> {
     v.into_iter().take(n).map(|(_, p)| p).collect()
 }
 
-fn notify(title: &str, body: &str) {
-    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
-    let script = format!("display notification \"{}\" with title \"LightSnap\" subtitle \"{}\"", esc(body), esc(title));
-    let _ = std::process::Command::new("/usr/bin/osascript").args(["-e", &script]).spawn();
-}
-
 fn setup_style(ctx: &egui::Context, font_bytes: Vec<u8>) {
     // ⌘+ / ⌘- / ⌘0 zoom the picture, not the whole interface.
     ctx.options_mut(|o| o.zoom_with_keyboard = false);
@@ -2623,7 +2614,7 @@ fn setup_style(ctx: &egui::Context, font_bytes: Vec<u8>) {
     fonts.font_data.insert("annot".into(), Arc::new(egui::FontData::from_owned(font_bytes)));
     fonts.families.insert(egui::FontFamily::Name("annot".into()), vec!["annot".into()]);
     // Small system font with the ⌥ ⌘ ⇧ key symbols, used as a fallback.
-    if let Ok(sym) = std::fs::read("/System/Library/Fonts/Apple Symbols.ttf") {
+    if let Ok(sym) = std::fs::read(platform::SYMBOL_FONT) {
         fonts.font_data.insert("symbols".into(), Arc::new(egui::FontData::from_owned(sym)));
         for fam in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
             fonts.families.entry(fam).or_default().push("symbols".into());

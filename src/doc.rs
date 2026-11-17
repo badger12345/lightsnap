@@ -473,13 +473,7 @@ pub fn render(doc: &Doc, font: &FontVec, skip: Option<usize>) -> RgbaImage {
 
 /// Loads a font for text annotations: a bold system font if there is one.
 pub fn load_font() -> (FontVec, Vec<u8>) {
-    let candidates = [
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-        "/Library/Fonts/Arial Bold.ttf",
-        "/System/Library/Fonts/Supplemental/Verdana Bold.ttf",
-        "/System/Library/Fonts/Supplemental/Tahoma Bold.ttf",
-    ];
-    for c in candidates {
+    for c in crate::platform::ANNOTATION_FONTS {
         if let Ok(bytes) = std::fs::read(c) {
             if let Ok(f) = FontVec::try_from_vec(bytes.clone()) {
                 return (f, bytes);

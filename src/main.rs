@@ -4,11 +4,10 @@
 #![allow(deprecated)]
 
 mod app;
-mod capture;
 mod doc;
 mod editor;
-mod displays;
 mod icons;
+mod platform;
 mod prefs;
 mod record;
 mod settings;
@@ -91,15 +90,14 @@ fn main() -> eframe::Result<()> {
 }
 
 /// If LightSnap ever stops because of an error, write what happened to
-/// ~/Library/Logs/LightSnap/crash.log so it can be found and fixed.
+/// crash.log in the system's log folder (see `platform::log_dir`) so it can be found and fixed.
 fn install_crash_log() {
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         if EXPECTED_PANIC.with(|c| c.get()) {
             return; // handled by show_immediate
         }
-        if let Some(home) = dirs::home_dir() {
-            let dir = home.join("Library/Logs/LightSnap");
+        if let Some(dir) = platform::log_dir() {
             let _ = std::fs::create_dir_all(&dir);
             let text = format!(
                 "--- {} ---\n{info}\n{}\n",
