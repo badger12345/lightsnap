@@ -70,6 +70,13 @@ pub enum Action {
     PauseRec,
 }
 
+/// Pixels per point of the screen under the mouse, where a capture just ended.
+fn capture_scale() -> Option<f32> {
+    let displays = platform::displays();
+    let mouse = platform::mouse_position()?;
+    displays.get(platform::display_index_at(&displays, mouse)).map(|d| d.scale.max(1.0))
+}
+
 fn action_from_id(id: &str, delay: u32) -> Option<Action> {
     Some(match id {
         "area" => Action::Capture(CaptureKind::Area),
@@ -477,10 +484,10 @@ impl LightSnap {
         if let Some(v) = &mut self.video {
             v.stop();
         }
-        let was_visible = self.visible;
-        if was_visible {
-            self.hide_window(ctx);
-        }
+        // Get the window out of the way. Also when it was shown without show_window
+        // (macOS can open it at launch), so the flag alone is not enough.
+        let was_visible = self.visible || ctx.input(|i| i.viewport().occluded == Some(false));
+        self.hide_window(ctx);
         if for_record {
             if let Some(ff) = self.ffmpeg.clone() {
                 let slot = self.devices.clone();
@@ -569,7 +576,9 @@ impl LightSnap {
 
     fn handle_capture(&mut self, ctx: &egui::Context, path: PathBuf, show_after: bool) {
         let name = self.settings.make_name("Screenshot");
-        let mut ppp = self.native_ppp;
+        // The scale of the screen the picture came from, not of the screen the window was
+        // last on: a snap from a normal screen shows at its real size, one from Retina too.
+        let mut ppp = capture_scale().unwrap_or(self.native_ppp);
         // "Shrink Retina snaps": store at normal (non-Retina) size.
         if self.settings.shrink_retina && ppp > 1.01 {
             if let Ok(img) = image::open(&path) {
@@ -2073,6 +2082,11 @@ impl eframe::App for LightSnap {
         }
         if let Some(p) = ctx.input(|i| i.viewport().native_pixels_per_point) {
             self.native_ppp = p;
+        }
+
+        // The window can get shown by macOS itself; keep the flag honest.
+        if ctx.input(|i| i.viewport().focused) == Some(true) {
+            self.visible = true;
         }
 
         self.handle_events(ctx);
