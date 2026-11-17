@@ -72,15 +72,7 @@ fn main() -> eframe::Result<()> {
         run_and_return: false,
         ..Default::default()
     };
-    if quiet {
-        #[cfg(target_os = "macos")]
-        {
-            options.event_loop_builder = Some(Box::new(|b| {
-                use winit::platform::macos::EventLoopBuilderExtMacOS;
-                b.with_activate_ignoring_other_apps(false);
-            }));
-        }
-    }
+    options.event_loop_builder = Some(platform::event_loop_hook(quiet));
 
     eframe::run_native(
         "LightSnap",
