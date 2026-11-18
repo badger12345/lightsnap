@@ -503,6 +503,24 @@ impl LightSnap {
     #[cfg(target_os = "linux")]
     pub fn tick_hidden(&mut self, ctx: &egui::Context) {
         self.handle_events(ctx);
+        self.test_open_prefs(ctx);
+    }
+
+    /// Test hooks: LS_TEST_PREFS=1 opens Preferences once, as the menu-bar item does;
+    /// LS_TEST_ABOUT=1 opens Preferences › About. On Linux they also run while no window
+    /// is open (the app starts that way after the first start).
+    fn test_open_prefs(&mut self, ctx: &egui::Context) {
+        if self.test_prefs_done || self.prefs.open {
+            return;
+        }
+        let about = test_env("LS_TEST_ABOUT");
+        if about || test_env("LS_TEST_PREFS") {
+            self.test_prefs_done = true;
+            self.run_action(ctx, Action::Settings);
+            if about {
+                self.prefs.tab = crate::prefs::Tab::About;
+            }
+        }
     }
 
     /// Linux: the window was opened again with a new graphics context, so every picture
@@ -2300,20 +2318,7 @@ impl eframe::App for LightSnap {
             }
         }
         self.auto_copy_edits(ctx);
-        // Test hook: LS_TEST_PREFS=1 opens Preferences once, as the menu-bar item does.
-        // Test hook: LS_TEST_ABOUT=1 opens Preferences › About once.
-        if test_env("LS_TEST_ABOUT") && !self.test_prefs_done {
-            self.test_prefs_done = true;
-            self.prefs.open();
-            self.prefs.tab = crate::prefs::Tab::About;
-            if !self.visible {
-                ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
-            }
-        }
-        if test_env("LS_TEST_PREFS") && !self.prefs.open && !self.test_prefs_done {
-            self.test_prefs_done = true;
-            self.run_action(ctx, Action::Settings);
-        }
+        self.test_open_prefs(ctx);
 
         // Closing the window keeps LightSnap in the menu bar. On Linux the window really
         // closes (Wayland can't hide it) and main.rs keeps the app running.
