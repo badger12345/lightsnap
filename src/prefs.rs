@@ -182,6 +182,8 @@ impl Prefs {
                         log::info!("preferences: could not take the focus");
                     }
                 }
+                // The frames must go on while the main window is covered by another app.
+                ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::RequestPaintWhileHidden);
                 ctx.request_repaint_after(std::time::Duration::from_millis(30));
             }
             if self.sized_for != Some(self.tab) {

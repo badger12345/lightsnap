@@ -235,7 +235,7 @@ pub fn highlight_width(style: &Style) -> f32 {
 }
 
 /// How strong the highlighter colour is (it is multiplied with the picture below).
-pub const HIGHLIGHT_ALPHA: u8 = 150;
+pub const HIGHLIGHT_ALPHA: u8 = 130;
 
 /// Where the text of an arrow-with-text sits: just behind the arrow's tail,
 /// on the side facing away from the object the arrow points at.
@@ -333,7 +333,9 @@ fn draw_text(pm: &mut Pixmap, font: &FontVec, px: f32, origin: Pos2, text: &str,
 
 fn paint(c: Color32) -> Paint<'static> {
     let mut p = Paint::default();
-    p.set_color_rgba8(c.r(), c.g(), c.b(), c.a());
+    // Color32 keeps its colour multiplied by alpha; tiny-skia wants it without.
+    let [r, g, b, a] = c.to_srgba_unmultiplied();
+    p.set_color_rgba8(r, g, b, a);
     p.anti_alias = true;
     p
 }
@@ -667,6 +669,21 @@ mod tests {
     }
 
     /// Arrow, callout, line, rect, ellipse and pen all use the slider width.
+    /// A highlighter on white paper shows its own colour, lightened, not a greyed one.
+    #[test]
+    fn highlighter_keeps_its_colour() {
+        let (font, _) = load_font();
+        let yellow = Style { color: Color32::from_rgb(255, 214, 0), width: 4.0 };
+        let doc = Doc {
+            base: Arc::new(RgbaImage::from_pixel(100, 60, image::Rgba([255, 255, 255, 255]))),
+            shapes: vec![Shape::Highlight { pts: vec![pos2(10.0, 30.0), pos2(90.0, 30.0)], style: yellow }],
+        };
+        let px = render(&doc, &font, None).get_pixel(50, 30).0;
+        let a = HIGHLIGHT_ALPHA as f32 / 255.0;
+        assert_eq!(px[0], 255, "{px:?}");
+        assert!((px[2] as f32 - 255.0 * (1.0 - a)).abs() <= 2.0, "{px:?}");
+    }
+
     #[test]
     fn same_stroke_width_for_all_shapes() {
         let (font, _) = load_font();

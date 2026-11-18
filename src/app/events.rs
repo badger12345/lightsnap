@@ -121,7 +121,8 @@ impl LightSnap {
             static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
             let left = Duration::from_secs(secs).saturating_sub(START.get_or_init(Instant::now).elapsed());
             if cfg!(debug_assertions) && !left.is_zero() {
-                ctx.request_repaint_after(left);
+                ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
+                ctx.request_repaint_after(left.min(Duration::from_millis(200)));
                 return;
             }
         }
@@ -190,9 +191,10 @@ impl LightSnap {
             }
             Action::Settings => {
                 self.prefs.open();
-                if !self.visible {
-                    ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
-                }
+                // Also when the main window is covered by another app's window: egui runs
+                // no frames for a covered window, and the Preferences window is drawn
+                // in those frames.
+                ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
             }
             Action::Quit => {
                 if let Some(r) = self.recording.take() {

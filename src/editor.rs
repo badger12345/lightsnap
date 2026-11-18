@@ -700,9 +700,11 @@ fn paint_preview(p: &egui::Painter, s: &Shape, to_screen: &dyn Fn(Pos2) -> Pos2,
             p.text(to_screen(origin), egui::Align2::LEFT_TOP, text, annot_font(px * zoom), doc::step_text_color(style.color));
         }
         Shape::Highlight { pts, style } => {
-            // egui cannot multiply colours; plain see-through colour comes close while drawing.
+            // egui cannot multiply colours. Plain see-through colour comes close while
+            // drawing, and on white paper it looks exactly like the final picture.
             let c = style.color;
-            let st = Stroke::new(doc::highlight_width(style) * zoom, Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 110));
+            let [r, g, b, _] = c.to_srgba_unmultiplied();
+            let st = Stroke::new(doc::highlight_width(style) * zoom, Color32::from_rgba_unmultiplied(r, g, b, doc::HIGHLIGHT_ALPHA));
             let pts: Vec<Pos2> = pts.iter().map(|q| to_screen(*q)).collect();
             if pts.len() == 1 {
                 p.rect_filled(Rect::from_center_size(pts[0], Vec2::splat(st.width)), 0.0, st.color);
