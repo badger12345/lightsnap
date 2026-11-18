@@ -212,6 +212,7 @@ pub struct LightSnap {
     hotkeys: Option<platform::Hotkeys>,
     toast: Option<Toast>,
     prefs: crate::prefs::Prefs,
+    about: crate::about::About,
     background: bool,
     test_prefs_done: bool,
     /// Last editor version put on the clipboard, and when the next copy is due.
@@ -269,6 +270,7 @@ impl LightSnap {
             hotkeys: None,
             toast: None,
             prefs: Default::default(),
+            about: Default::default(),
             background,
             test_prefs_done: false,
             clip_version: 0,
@@ -313,11 +315,16 @@ impl LightSnap {
         if let Some(p) = open {
             app.open_file(&ctx, &p);
         }
-        // For check pictures: LS_PREFS=general|advanced|hotkeys draws the settings inside the main window.
+        // For check pictures: LS_PREFS=general|advanced|hotkeys|about draws the settings inside the main window.
         if let (true, Ok(tab)) = (app.shot.is_some() && cfg!(debug_assertions), std::env::var("LS_PREFS")) {
             ctx.set_embed_viewports(true);
             app.pending_size = Some(vec2(900.0, 840.0));
-            app.prefs.open();
+            if tab == "about" {
+                app.pending_size = Some(vec2(400.0, 480.0));
+                app.about.open();
+            } else {
+                app.prefs.open();
+            }
             app.prefs.tab = match tab.as_str() {
                 "advanced" => crate::prefs::Tab::Advanced,
                 "hotkeys" => crate::prefs::Tab::Hotkeys,
@@ -483,7 +490,7 @@ impl LightSnap {
     /// Linux: whether the window has to be open (it is shown, or the record area is being chosen).
     #[cfg(target_os = "linux")]
     pub fn wants_window(&self) -> bool {
-        self.visible || self.select.is_some() || self.prefs.open
+        self.visible || self.select.is_some() || self.prefs.open || self.about.open
     }
 
     /// The size of the main window as a normal window: the last one it had, or the default.
@@ -1027,6 +1034,13 @@ impl LightSnap {
                     let p = PathBuf::from(path);
                     self.open_file(ctx, &p);
                     self.show_window(ctx);
+                    continue;
+                }
+                if id == "about" {
+                    self.about.open();
+                    if !self.visible {
+                        ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
+                    }
                     continue;
                 }
                 if id == "help" {
@@ -2308,6 +2322,14 @@ impl eframe::App for LightSnap {
         }
         self.auto_copy_edits(ctx);
         // Test hook: LS_TEST_PREFS=1 opens Preferences once, as the menu-bar item does.
+        // Test hook: LS_TEST_ABOUT=1 opens the About window once, as the menu-bar item does.
+        if test_env("LS_TEST_ABOUT") && !self.test_prefs_done {
+            self.test_prefs_done = true;
+            self.about.open();
+            if !self.visible {
+                ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
+            }
+        }
         if test_env("LS_TEST_PREFS") && !self.prefs.open && !self.test_prefs_done {
             self.test_prefs_done = true;
             self.run_action(ctx, Action::Settings);
@@ -2472,6 +2494,10 @@ impl eframe::App for LightSnap {
         // Settings, in a window of their own.
         self.prefs.can_configure_keys = self.hotkeys.as_ref().is_some_and(|h| h.can_configure());
         let out = self.prefs.show(&ctx, &mut self.settings);
+        if out.open_about {
+            self.about.open();
+        }
+        self.about.show(&ctx);
         if out.configure_keys {
             if let Some(h) = &self.hotkeys {
                 h.configure();
@@ -2974,6 +3000,7 @@ fn build_menu(recording: bool, st: &Settings) -> Vec<platform::MenuEntry> {
                 MenuEntry::Item { id: String::new(), text: "Nothing is ever uploaded".into(), enabled: false, key: None },
             ],
         },
+        item("about", "About LightSnap"),
         MenuEntry::Item {
             id: "quit".into(),
             text: "Quit".into(),

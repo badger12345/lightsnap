@@ -3,6 +3,7 @@
 
 #![allow(deprecated)]
 
+mod about;
 mod app;
 mod doc;
 mod editor;

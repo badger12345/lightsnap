@@ -63,7 +63,6 @@ pub struct Prefs {
     pub tab: Tab,
     /// The shortcut being recorded right now.
     pub capturing: Option<String>,
-    about: bool,
     sized_for: Option<Tab>,
     focused: bool,
     /// Height of the current tab's contents, to fit the window to it.
@@ -88,6 +87,8 @@ pub struct PrefsOut {
     pub pick_editor_app: bool,
     /// Ask the desktop to show its page for changing the shortcuts (Linux).
     pub configure_keys: bool,
+    /// Ask the app to open the About window.
+    pub open_about: bool,
 }
 
 impl Default for Prefs {
@@ -96,7 +97,6 @@ impl Default for Prefs {
             open: false,
             tab: Tab::General,
             capturing: None,
-            about: false,
             sized_for: None,
             focused: false,
             content_h: 0.0,
@@ -293,18 +293,7 @@ impl Prefs {
         });
         ui.vertical_centered(|ui| {
             if ui.add(egui::Button::new("About LightSnap").min_size(vec2(138.0, 24.0))).clicked() {
-                self.about = !self.about;
-            }
-            if self.about {
-                ui.label(
-                    egui::RichText::new(
-                        format!(
-                            "LightSnap 0.1 — screenshots and screen recordings that stay on {}.\nNo account, no cloud, nothing is uploaded.",
-                            crate::platform::THIS_COMPUTER
-                        ),
-                    )
-                    .color(DIM),
-                );
+                out.open_about = true;
             }
         });
     }
