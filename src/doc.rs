@@ -263,14 +263,10 @@ fn stroke(width: f32) -> Stroke {
     }
 }
 
-/// Arrow geometry shared by the final picture and the live preview:
-/// returns the end of the shaft and the three head points.
-/// Arrow sizes tied to the text size of the same slider setting, so an arrow
-/// looks as heavy as text next to it: the line is as thick as a bold letter's
-/// stroke, the head about as tall as a capital letter.
+/// Arrow sizes: the shaft is exactly as thick as every other stroke of the
+/// same slider setting, the head grows with it.
 pub fn arrow_dims(style: &Style) -> (f32, f32) {
-    let f = style.font_px();
-    ((f * 0.13).max(1.5), f * 0.72)
+    (style.width, style.width * 2.5 + 8.0)
 }
 
 /// Arrow geometry shared by the final picture and the live preview:
@@ -543,5 +539,43 @@ mod tests {
         out.save("shots/render-test.png").unwrap();
         let c = crop(&doc, Rect::from_min_max(pos2(10.0, 10.0), pos2(300.0, 200.0))).unwrap();
         assert_eq!(c.base.dimensions(), (290, 190));
+    }
+
+    /// Arrow, callout, line, rect, ellipse and pen all use the slider width.
+    #[test]
+    fn same_stroke_width_for_all_shapes() {
+        let (font, _) = load_font();
+        for width in [1.0, 4.0, 12.0, 40.0] {
+            let st = Style { color: Color32::BLACK, width };
+            let doc = Doc {
+                base: Arc::new(RgbaImage::from_pixel(400, 1000, image::Rgba([255, 255, 255, 255]))),
+                shapes: vec![
+                    Shape::Arrow { a: pos2(20.0, 100.0), b: pos2(380.0, 100.0), style: st },
+                    Shape::Callout { tip: pos2(380.0, 250.0), pos: pos2(20.0, 250.0), text: String::new(), style: st },
+                    Shape::Line { a: pos2(20.0, 400.0), b: pos2(380.0, 400.0), style: st },
+                    Shape::Rect { a: pos2(20.0, 500.0), b: pos2(380.0, 600.0), style: st },
+                    Shape::Ellipse { a: pos2(20.0, 700.0), b: pos2(380.0, 900.0), style: st },
+                    Shape::Pen { pts: vec![pos2(20.0, 950.0), pos2(200.0, 950.0), pos2(380.0, 950.0)], style: st },
+                ],
+            };
+            let out = render(&doc, &font, None);
+            // Ink across one column, in pixels, around a given y.
+            let ink = |y: f32| -> f32 {
+                let (a, b) = ((y - 30.0) as u32, (y + 30.0) as u32);
+                (a..b).map(|y| (255 - out.get_pixel(100, y)[0]) as f32 / 255.0).sum()
+            };
+            let ellipse_top = ink(700.0);
+            for (name, got) in [
+                ("arrow", ink(100.0)),
+                ("callout", ink(250.0)),
+                ("line", ink(400.0)),
+                ("rect", ink(500.0)),
+                ("pen", ink(950.0)),
+            ] {
+                assert!((got - width).abs() < 0.3, "{name}: {got} px at width {width}");
+            }
+            // The ellipse top is slightly curved at x=100, so allow a bit more.
+            assert!((ellipse_top - width).abs() < width * 0.15 + 0.3, "ellipse: {ellipse_top} px at width {width}");
+        }
     }
 }
