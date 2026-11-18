@@ -75,6 +75,8 @@ pub struct Prefs {
     pub can_configure_keys: bool,
     /// Frames to wait before the window is made (Linux, see `show`).
     wait: u32,
+    /// Frames left to check that the window got the height it was sent.
+    size_checks: u32,
     /// The app icon on the About tab, loaded when first shown.
     about_icon: Option<egui::TextureHandle>,
 }
@@ -106,6 +108,7 @@ impl Default for Prefs {
             content_h: 0.0,
             can_configure_keys: false,
             wait: 0,
+            size_checks: 0,
             about_icon: None,
         }
     }
@@ -230,7 +233,21 @@ impl Prefs {
             let want = HEADER_H + 12.0 + used.inner + 16.0;
             if (want - self.content_h).abs() > 1.0 {
                 self.content_h = want;
+                self.size_checks = 20;
                 ctx.send_viewport_cmd(ViewportCommand::InnerSize(vec2(size.x, want)));
+            }
+            // A new window may not exist yet when the size is sent (Wayland), and then the
+            // request is lost. So send it again until the window has the height. Wayland
+            // never reports the size, so there it is sent for the first 20 frames.
+            if self.size_checks > 0 && !ctx.embed_viewports() {
+                match ctx.input(|i| i.viewport().inner_rect) {
+                    Some(r) if (r.height() - want).abs() <= 1.0 => self.size_checks = 0,
+                    _ => {
+                        self.size_checks -= 1;
+                        ctx.send_viewport_cmd(ViewportCommand::InnerSize(vec2(size.x, want)));
+                        ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                    }
+                }
             }
         });
         if close {
