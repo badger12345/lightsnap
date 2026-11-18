@@ -490,7 +490,7 @@ impl LightSnap {
         }
         if self.recent_dirty {
             self.recent_dirty = false;
-            self.recent = recent_files(&self.settings.save_dir, 6);
+            self.recent = recent_files(&self.settings.save_dir, 3);
         }
         let card_w = 560.0f32.min(rect.width() - 40.0);
         let card = Rect::from_center_size(rect.center(), vec2(card_w, (rect.height() - 40.0).min(430.0)));
