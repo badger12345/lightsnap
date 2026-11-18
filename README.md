@@ -12,9 +12,10 @@ Needs a Mac with Apple Silicon and macOS 27 or later, or a Linux desktop running
 
 There are only few tools that do screenshots and screen video recording at the same time.
 And even fewer of them are free open source. They also tend to get worse over time: accounts,
-cloud uploads, subscriptions, ads, and more memory with every update. LightSnap does one job
-and stays small.
+cloud uploads, subscriptions, ads, and more memory with every update. LightSnap is the
+solution for that.
 
+- **2 in 1** take screenshots an annotate them, record your screen as a video in one tool
 - **No account, no cloud, no ads, no subscription.** LightSnap makes no network
   connections. Your captures stay on your computer.
 - **Small:** a 6.4 MB download, 15 MB installed, ffmpeg included.
