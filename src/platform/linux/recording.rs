@@ -296,11 +296,12 @@ pub fn capture_all_screens(_count: usize, cursor: bool) -> Vec<PathBuf> {
 
 // ---------------------------------------------------------------- ffmpeg
 
-/// Places to look for ffmpeg, in order: the system's.
+/// Places to look for ffmpeg, in order: the system's. Only absolute PATH entries count:
+/// an empty or relative one ("", ".") would run an ffmpeg from the current folder.
 pub fn ffmpeg_candidates() -> Vec<PathBuf> {
     let mut candidates: Vec<PathBuf> = vec!["/usr/bin/ffmpeg".into()];
     if let Some(path) = std::env::var_os("PATH") {
-        candidates.extend(std::env::split_paths(&path).map(|d| d.join("ffmpeg")));
+        candidates.extend(std::env::split_paths(&path).filter(|d| d.is_absolute()).map(|d| d.join("ffmpeg")));
     }
     candidates
 }

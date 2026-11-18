@@ -28,7 +28,8 @@ pub fn ffmpeg_candidates() -> Vec<PathBuf> {
         "/opt/local/bin/ffmpeg".into(),
     ]);
     if let Some(path) = std::env::var_os("PATH") {
-        candidates.extend(std::env::split_paths(&path).map(|d| d.join("ffmpeg")));
+        // Only absolute entries: "" or "." would run an ffmpeg from the current folder.
+        candidates.extend(std::env::split_paths(&path).filter(|d| d.is_absolute()).map(|d| d.join("ffmpeg")));
     }
     candidates
 }

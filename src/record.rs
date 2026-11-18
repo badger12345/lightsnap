@@ -289,6 +289,9 @@ mod tests {
     #[ignore]
     fn record_pause_finish() {
         let ff = find_ffmpeg().expect("ffmpeg");
+        // Linux records from the shared screen, which the still picture starts sharing.
+        #[cfg(target_os = "linux")]
+        assert!(!platform::capture_all_screens(1, false).is_empty(), "no screen shared");
         let devices = platform::list_devices(&ff);
         assert!(devices.screen_index.is_some());
         let opts = RecordOptions {

@@ -71,15 +71,71 @@ pub fn display_index_at(displays: &[Display], p: Pos2) -> usize {
         .unwrap_or(0)
 }
 
-/// A fresh file in the app's own temp folder, like `shot-1731840000000.png`.
+/// A fresh file in the app's own temp folder, like `shot-1731840000000-0.png`.
 pub fn temp_file(prefix: &str, ext: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join("lightsnap");
-    let _ = std::fs::create_dir_all(&dir);
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNT: AtomicU64 = AtomicU64::new(0);
     let n = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    dir.join(format!("{prefix}-{n}.{ext}"))
+    let c = COUNT.fetch_add(1, Ordering::Relaxed);
+    temp_dir().join(format!("{prefix}-{n}-{c}.{ext}"))
+}
+
+/// The app's temp folder. Screenshots and recordings pass through it, so only this user
+/// may see into it (0700). On Linux /tmp is shared by all users: the folder goes into
+/// $XDG_RUNTIME_DIR, else into /tmp with the user id in its name. A folder that another
+/// user made, or a symlink, is not used.
+fn temp_dir() -> PathBuf {
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        // SAFETY: getuid has no preconditions and cannot fail.
+        let uid = unsafe { libc::getuid() };
+        #[cfg(target_os = "linux")]
+        let first = dirs::runtime_dir().map(|d| d.join("lightsnap")).unwrap_or_else(|| std::env::temp_dir().join(format!("lightsnap-{uid}")));
+        // macOS: $TMPDIR is already per user.
+        #[cfg(not(target_os = "linux"))]
+        let first = std::env::temp_dir().join("lightsnap");
+        let fallback = dirs::cache_dir().map(|d| d.join("lightsnap").join("tmp"));
+        for dir in std::iter::once(first).chain(fallback) {
+            if private_dir(&dir, uid) {
+                return dir;
+            }
+            log::warn!(target: "lightsnap", "temp folder {} is not private, not using it", dir.display());
+        }
+        // Last resort: a new folder with a name no one can guess ahead.
+        let dir = std::env::temp_dir().join(format!("lightsnap-{uid}-{}-{}", std::process::id(), random_u64()));
+        let _ = private_dir(&dir, uid);
+        dir
+    })
+    .clone()
+}
+
+/// Makes `dir` (mode 0700) if needed and checks that it is a real folder of this user
+/// that no one else can open.
+fn private_dir(dir: &std::path::Path, uid: u32) -> bool {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+    if let Some(parent) = dir.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::DirBuilder::new().mode(0o700).create(dir);
+    let Ok(meta) = std::fs::symlink_metadata(dir) else { return false };
+    if !meta.file_type().is_dir() || meta.uid() != uid {
+        return false;
+    }
+    if meta.mode() & 0o077 != 0 {
+        // Ours, but made open by an older LightSnap: close it.
+        return std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).is_ok();
+    }
+    true
+}
+
+fn random_u64() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0));
+    h.finish()
 }
 
 /// Microphones and screens that the screen recorder can use.
@@ -147,3 +203,38 @@ pub fn tray_pixels(recording: bool, light: bool) -> Vec<u8> {
 }
 
 pub const TRAY_PX: u32 = 44;
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn temp_folder_is_private() {
+        let uid = unsafe { libc::getuid() };
+        let base = std::env::temp_dir().join(format!("lightsnap-privtest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        // New folder: made with 0700.
+        let fresh = base.join("fresh");
+        assert!(super::private_dir(&fresh, uid));
+        assert_eq!(std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777, 0o700);
+        // Our own open folder (older LightSnap): closed to 0700.
+        let open = base.join("open");
+        std::fs::create_dir(&open).unwrap();
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o775)).unwrap();
+        assert!(super::private_dir(&open, uid));
+        assert_eq!(std::fs::metadata(&open).unwrap().permissions().mode() & 0o777, 0o700);
+        // A symlink to a folder is refused, even to our own.
+        let link = base.join("link");
+        std::os::unix::fs::symlink(&fresh, &link).unwrap();
+        assert!(!super::private_dir(&link, uid));
+        // A folder of another user is refused.
+        assert!(!super::private_dir(&fresh, uid + 1));
+        // temp_file lands in a private folder and never repeats a name.
+        let (a, b) = (super::temp_file("t", "png"), super::temp_file("t", "png"));
+        assert_ne!(a, b);
+        let dir = a.parent().unwrap();
+        assert_eq!(std::fs::metadata(dir).unwrap().permissions().mode() & 0o077, 0);
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+}
