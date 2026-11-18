@@ -171,6 +171,7 @@ pub fn default_hotkey(id: &str) -> Option<Hotkey> {
         "area" => Some(Hotkey::new(true, linux, "Digit4")),
         "full" => Some(Hotkey::new(true, true, "Digit6")),
         "timed" => Some(Hotkey::new(true, linux, "Digit2")),
+        "window" if linux => Some(Hotkey::new(true, true, "Digit5")),
         "latest" => Some(Hotkey::new(true, true, "Digit0")),
         "record" => Some(Hotkey::new(true, linux, "Digit3")),
         _ => None,
@@ -270,6 +271,9 @@ pub struct Settings {
     pub keys: BTreeMap<String, Option<Hotkey>>,
     /// The window was shown once (first start); later starts stay quietly in the menu bar.
     pub welcomed: bool,
+    /// Linux: the size of the main window when it was last closed (Wayland closes the
+    /// window instead of hiding it, so the size has to be kept here).
+    pub window_size: Option<[f32; 2]>,
     /// The shortcuts as the desktop has them, by action id (Linux: the desktop owns
     /// global shortcuts and the person may have changed them there). Not saved.
     #[serde(skip)]
@@ -310,6 +314,7 @@ impl Default for Settings {
             apply_template_reopened: false,
             keys: BTreeMap::new(),
             welcomed: false,
+            window_size: None,
             live_keys: None,
         }
     }

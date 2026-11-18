@@ -153,7 +153,13 @@ struct Select {
     focused: bool,
     /// How often lost pictures and letters were sent again (see show_immediate).
     resent: u32,
+    /// Linux: the area is chosen and shown for a few seconds before the recording starts
+    /// (Wayland gives no frame around the area during the recording).
+    countdown: Option<Instant>,
 }
+
+/// Linux: how long the chosen area is shown before the recording starts.
+const COUNTDOWN_SECS: u64 = 3;
 
 #[derive(Default)]
 enum SelectOut {
@@ -465,10 +471,11 @@ impl LightSnap {
     fn hide_window(&mut self, ctx: &egui::Context) {
         ctx.send_viewport_cmd(ViewportCommand::Visible(false));
         // Wayland can't hide a window: close it. main.rs keeps the app running and opens
-        // the window again when it is needed (see `wants_window`).
+        // the window again when it is needed (see `wants_window`), in the size it had.
         #[cfg(target_os = "linux")]
         if self.visible {
             ctx.send_viewport_cmd(ViewportCommand::Close);
+            self.settings.save();
         }
         self.visible = false;
     }
@@ -477,6 +484,11 @@ impl LightSnap {
     #[cfg(target_os = "linux")]
     pub fn wants_window(&self) -> bool {
         self.visible || self.select.is_some() || self.prefs.open
+    }
+
+    /// The size of the main window as a normal window: the last one it had, or the default.
+    pub fn window_size(&self) -> Vec2 {
+        self.settings.window_size.map(|[w, h]| vec2(w, h)).unwrap_or(vec2(980.0, 620.0))
     }
 
     /// Linux: the record area is being chosen; the window opens full screen for it.
@@ -1097,6 +1109,7 @@ impl LightSnap {
                                 settings_open: false,
                                 focused: false,
                                 resent: 0,
+                                countdown: None,
                             });
                             ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
                         }
@@ -1862,7 +1875,7 @@ impl LightSnap {
         let settings = &mut self.settings;
         let devices = &self.devices;
         let has_ff = self.ffmpeg.is_some();
-        let Select { screens, rect, before_full, drag, settings_open, focused, .. } = sel;
+        let Select { screens, rect, before_full, drag, settings_open, focused, countdown, .. } = sel;
         let all = screens.iter().fold(Rect::NOTHING, |a, s| a.union(s.bounds));
         let bounds_list: Vec<Rect> = screens.iter().map(|s| s.bounds).collect();
         // The screen that holds the middle of the area gets the Record button.
@@ -1916,6 +1929,9 @@ impl LightSnap {
                     painter.rect_filled(full, 0.0, Color32::from_gray(30));
                 }
                 let to_local = |r: Rect| r.translate(-offset);
+                if let (Some(t0), Some(r)) = (*countdown, *rect) {
+                    return countdown_overlay(ui, &painter, full, to_local(r), t0, r);
+                }
                 let resp = ui.interact(full, Id::new(("sel_bg", si)), Sense::click_and_drag());
                 let pointer = resp.interact_pointer_pos().map(|p| p + offset);
 
@@ -2352,6 +2368,18 @@ impl eframe::App for LightSnap {
         if let Some(sz) = self.pending_size.take() {
             ctx.send_viewport_cmd(ViewportCommand::InnerSize(sz));
         }
+        // Linux: note the size of the normal window, so it opens again in that size.
+        if cfg!(target_os = "linux") && self.select.is_none() {
+            // Wayland gives no window position, so `inner_rect` is empty there; the size of
+            // the window's area is known all the same.
+            let (r, full, min) = ctx.input(|i| (i.viewport_rect(), i.viewport().fullscreen, i.viewport().minimized));
+            if full != Some(true) && min != Some(true) {
+                let sz = [r.width().round(), r.height().round()];
+                if r.width() >= 100.0 && self.settings.window_size != Some(sz) {
+                    self.settings.window_size = Some(sz);
+                }
+            }
+        }
         if let Some(p) = self.pending_pos.take() {
             ctx.send_viewport_cmd(ViewportCommand::OuterPosition(p));
         }
@@ -2367,7 +2395,7 @@ impl eframe::App for LightSnap {
         // Area selection before a recording.
         let selecting_in_root = cfg!(target_os = "linux") && self.select.is_some();
         let mut sel_out = self.select_overlay(&ctx, if selecting_in_root { Some(&mut *ui) } else { None });
-        if test_env("LS_TEST_AUTOREC") && self.select.is_some() {
+        if test_env("LS_TEST_AUTOREC") && self.select.as_ref().is_some_and(|s| s.countdown.is_none()) {
             let t = *self.test_select_since.get_or_insert_with(Instant::now);
             if t.elapsed() > Duration::from_millis(1500) {
                 if let Some(r) = self.select.as_ref().and_then(|s| s.rect) {
@@ -2386,9 +2414,19 @@ impl eframe::App for LightSnap {
                     // Back to a normal window.
                     ctx.send_viewport_cmd(ViewportCommand::Fullscreen(false));
                     ctx.send_viewport_cmd(ViewportCommand::Decorations(true));
-                    ctx.send_viewport_cmd(ViewportCommand::InnerSize(vec2(980.0, 620.0)));
+                    ctx.send_viewport_cmd(ViewportCommand::InnerSize(self.window_size()));
                 }
                 self.show_window(&ctx);
+            }
+            SelectOut::Record(r) if selecting_in_root && self.select.as_ref().is_some_and(|s| s.countdown.is_none()) => {
+                // Show the area a moment with a countdown, then record.
+                if let Some(s) = &mut self.select {
+                    s.rect = Some(r);
+                    s.drag = None;
+                    s.settings_open = false;
+                    s.countdown = Some(Instant::now());
+                }
+                ctx.request_repaint();
             }
             SelectOut::Record(r) => {
                 let (screen, bounds, scale) = self
@@ -2414,7 +2452,7 @@ impl eframe::App for LightSnap {
                     } else {
                         ctx.send_viewport_cmd(ViewportCommand::Fullscreen(false));
                         ctx.send_viewport_cmd(ViewportCommand::Decorations(true));
-                        ctx.send_viewport_cmd(ViewportCommand::InnerSize(vec2(980.0, 620.0)));
+                        ctx.send_viewport_cmd(ViewportCommand::InnerSize(self.window_size()));
                     }
                 }
             }
@@ -2776,6 +2814,45 @@ fn short_path(p: &Path) -> String {
 /// Test hooks (LS_TEST_*) only work in debug builds; a release build ignores them.
 fn test_env(name: &str) -> bool {
     cfg!(debug_assertions) && std::env::var_os(name).is_some()
+}
+
+/// Linux: the chosen area with a red frame and a countdown, before the recording starts.
+/// Esc cancels; when the time is up the area is recorded.
+fn countdown_overlay(ui: &mut Ui, painter: &egui::Painter, full: Rect, lr: Rect, t0: Instant, r: Rect) -> SelectOut {
+    let ctx = ui.ctx().clone();
+    let dim = Color32::from_black_alpha(120);
+    for d in [
+        Rect::from_min_max(full.min, pos2(full.max.x, lr.min.y)),
+        Rect::from_min_max(pos2(full.min.x, lr.max.y), full.max),
+        Rect::from_min_max(pos2(full.min.x, lr.min.y), pos2(lr.min.x, lr.max.y)),
+        Rect::from_min_max(pos2(lr.max.x, lr.min.y), pos2(full.max.x, lr.max.y)),
+    ] {
+        let d = d.intersect(full);
+        if d.is_positive() {
+            painter.rect_filled(d, 0.0, dim);
+        }
+    }
+    painter.rect_stroke(lr, 0.0, Stroke::new(3.0, RED), StrokeKind::Outside);
+    let elapsed = t0.elapsed();
+    let left = COUNTDOWN_SECS.saturating_sub(elapsed.as_secs());
+    if left == 0 {
+        return SelectOut::Record(r);
+    }
+    let c = lr.center();
+    painter.circle_filled(c, 56.0, Color32::from_black_alpha(170));
+    painter.text(c, Align2::CENTER_CENTER, left.to_string(), FontId::proportional(64.0), Color32::WHITE);
+    let galley = painter.layout_no_wrap("Recording starts   ·   Esc: cancel".into(), FontId::proportional(13.0), Color32::WHITE);
+    let hr = Rect::from_center_size(pos2(c.x, c.y + 56.0 + 24.0), galley.size() + vec2(16.0, 8.0));
+    painter.rect_filled(hr, 6.0, Color32::from_black_alpha(170));
+    painter.galley(hr.min + vec2(8.0, 4.0), galley, Color32::WHITE);
+    ctx.set_cursor_icon(egui::CursorIcon::Default);
+    if ctx.input(|i| i.key_pressed(Key::Escape) || i.viewport().close_requested()) {
+        return SelectOut::Cancel;
+    }
+    // Wake up when the number changes.
+    let next = Duration::from_secs(elapsed.as_secs() + 1).saturating_sub(elapsed);
+    ctx.request_repaint_after(next);
+    SelectOut::None
 }
 
 fn recent_files(dir: &Path, n: usize) -> Vec<PathBuf> {
