@@ -1,4 +1,4 @@
-//! The settings window: its own window with General, Advanced and Hotkeys tabs.
+//! The settings window: its own window with General, Advanced, Hotkeys and About tabs.
 //! Cloud-only options of the original (upload, links, account) are left out on purpose.
 
 use crate::icons::{self, Icon};
@@ -32,6 +32,7 @@ pub enum Tab {
     General,
     Advanced,
     Hotkeys,
+    About,
 }
 
 impl Tab {
@@ -40,6 +41,7 @@ impl Tab {
             Tab::General => "General",
             Tab::Advanced => "Advanced",
             Tab::Hotkeys => "Hotkeys",
+            Tab::About => "About",
         }
     }
     fn icon(self) -> Icon {
@@ -47,6 +49,7 @@ impl Tab {
             Tab::General => Icon::Sliders,
             Tab::Advanced => Icon::Gear,
             Tab::Hotkeys => Icon::Command,
+            Tab::About => Icon::Info,
         }
     }
     fn size(self) -> Vec2 {
@@ -54,6 +57,7 @@ impl Tab {
             Tab::General => vec2(WIN_W, 330.0),
             Tab::Advanced => vec2(WIN_W, 600.0),
             Tab::Hotkeys => vec2(WIN_W, 600.0),
+            Tab::About => vec2(WIN_W, 400.0),
         }
     }
 }
@@ -71,6 +75,8 @@ pub struct Prefs {
     pub can_configure_keys: bool,
     /// Frames to wait before the window is made (Linux, see `show`).
     wait: u32,
+    /// The app icon on the About tab, loaded when first shown.
+    about_icon: Option<egui::TextureHandle>,
 }
 
 #[derive(Default)]
@@ -87,8 +93,6 @@ pub struct PrefsOut {
     pub pick_editor_app: bool,
     /// Ask the desktop to show its page for changing the shortcuts (Linux).
     pub configure_keys: bool,
-    /// Ask the app to open the About window.
-    pub open_about: bool,
 }
 
 impl Default for Prefs {
@@ -102,6 +106,7 @@ impl Default for Prefs {
             content_h: 0.0,
             can_configure_keys: false,
             wait: 0,
+            about_icon: None,
         }
     }
 }
@@ -166,7 +171,7 @@ impl Prefs {
                 [header.left_bottom(), header.right_bottom()],
                 Stroke::new(1.0, Color32::from_gray(24)),
             );
-            let tabs = [Tab::General, Tab::Advanced, Tab::Hotkeys];
+            let tabs = [Tab::General, Tab::Advanced, Tab::Hotkeys, Tab::About];
             let tw = 66.0;
             let x0 = header.center().x - tw * tabs.len() as f32 / 2.0;
             for (i, t) in tabs.iter().enumerate() {
@@ -217,6 +222,7 @@ impl Prefs {
                     Tab::General => self.general(ui, s, &mut out),
                     Tab::Advanced => self.advanced(ui, s, &mut out),
                     Tab::Hotkeys => self.hotkeys(ui, s, &mut out),
+                    Tab::About => crate::about::draw(ui, &mut self.about_icon),
                 }
                 ui.min_rect().height()
             });
@@ -289,11 +295,6 @@ impl Prefs {
             let mut on = crate::platform::login_item_enabled();
             if ui.checkbox(&mut on, "Launch at login").changed() {
                 crate::platform::set_login_item(on);
-            }
-        });
-        ui.vertical_centered(|ui| {
-            if ui.add(egui::Button::new("About LightSnap").min_size(vec2(138.0, 24.0))).clicked() {
-                out.open_about = true;
             }
         });
     }

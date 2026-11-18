@@ -24,6 +24,7 @@ pub enum Icon {
     Gear,
     Sliders,
     Command,
+    Info,
 }
 
 fn arc(c: Pos2, r: f32, a0: f32, a1: f32, n: usize) -> Vec<Pos2> {
@@ -184,6 +185,11 @@ pub fn draw(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             );
             let glyph = if cfg!(target_os = "linux") { "⌨" } else { "⌘" };
             p.text(c, egui::Align2::CENTER_CENTER, glyph, egui::FontId::proportional(13.0 * u), color);
+        }
+        Icon::Info => {
+            p.circle_stroke(c, 8.5 * u, Stroke::new(1.6 * u.max(0.8), color));
+            p.circle_filled(at(10.0, 5.8), 1.3 * u, color);
+            p.line_segment([at(10.0, 8.6), at(10.0, 14.6)], Stroke::new(2.0 * u.max(0.8), color));
         }
         Icon::Gear => {
             for i in 0..8 {

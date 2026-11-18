@@ -18,7 +18,7 @@ These will not be merged:
 ## Issues
 
 - **Bug:** say what you did, what happened and what you expected. Add your OS version,
-  desktop (on Linux) and LightSnap version (About window). Screenshots help.
+  desktop (on Linux) and LightSnap version (Preferences › About). Screenshots help.
 - **Idea:** describe the problem first, then your solution.
 - **Before a larger change**, open an issue so we can agree on the approach. That saves
   you work on a pull request that cannot be merged.
