@@ -38,6 +38,8 @@ arboard = { version = "3.7", default-features = false, features = ["image-data",
 smithay-client-toolkit = { version = "0.19", default-features = false }
 wayland-client = "0.31"
 futures-util = { version = "0.3", default-features = false }
+pipewire = "0.10"
+libc = "0.2"
 
 [profile.release]
 opt-level = 3

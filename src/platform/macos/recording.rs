@@ -7,6 +7,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
+/// Ends the screen sharing that `capture_all_screens` started on systems that need one
+/// (Linux). Nothing to do on macOS.
+pub fn end_screen_session() {}
+
 /// Places to look for ffmpeg, in order.
 pub fn ffmpeg_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();

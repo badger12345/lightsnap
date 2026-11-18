@@ -20,33 +20,6 @@ pub fn run_capture(kind: CaptureKind, _sound: bool) -> Option<PathBuf> {
     take_file(&src, "shot")
 }
 
-/// Takes one picture of every screen, in the order of `displays()`.
-pub fn capture_all_screens(_count: usize) -> Vec<PathBuf> {
-    let Some(src) = portal_screenshot(false) else { return Vec::new() };
-    let Some(file) = take_file(&src, "desktop") else { return Vec::new() };
-    let displays = super::displays();
-    if displays.len() <= 1 {
-        return vec![file];
-    }
-    // The portal gives one picture of the whole desktop: cut it into screens.
-    let Ok(img) = image::open(&file) else { return Vec::new() };
-    let _ = std::fs::remove_file(&file);
-    let all = displays.iter().fold(egui::Rect::NOTHING, |a, d| a.union(d.bounds));
-    let f = img.width() as f32 / all.width().max(1.0);
-    displays
-        .iter()
-        .enumerate()
-        .filter_map(|(i, d)| {
-            let r = d.bounds.translate(-all.min.to_vec2());
-            let (x, y) = ((r.min.x * f).round() as u32, (r.min.y * f).round() as u32);
-            let (w, h) = ((r.width() * f).round() as u32, (r.height() * f).round() as u32);
-            let part = img.crop_imm(x, y, w.min(img.width().saturating_sub(x)), h.min(img.height().saturating_sub(y)));
-            let out = temp_file(&format!("screen{i}"), "png");
-            part.save(&out).ok().map(|_| out)
-        })
-        .collect()
-}
-
 fn portal_screenshot(interactive: bool) -> Option<PathBuf> {
     super::portal::register();
     let res = pollster::block_on(async {

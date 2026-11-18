@@ -14,6 +14,24 @@ struct Sni {
     recording: bool,
     title: Option<String>,
     sink: Sink,
+    /// Folder with the two icons as files (see `write_icons`), if it could be made.
+    icon_dir: Option<std::path::PathBuf>,
+}
+
+const ICON_IDLE: &str = "lightsnap-tray";
+const ICON_REC: &str = "lightsnap-tray-recording";
+
+/// Writes both tray icons as PNG files. Tray hosts reliably follow a change of icon
+/// *name*; a changed picture alone is not always picked up (GNOME's AppIndicator
+/// extension keeps the first one).
+fn write_icons() -> Option<std::path::PathBuf> {
+    let dir = dirs::cache_dir()?.join("lightsnap").join("icons");
+    std::fs::create_dir_all(&dir).ok()?;
+    for (name, rec) in [(ICON_IDLE, false), (ICON_REC, true)] {
+        let img = image::RgbaImage::from_raw(TRAY_PX, TRAY_PX, tray_pixels(rec, true))?;
+        img.save(dir.join(format!("{name}.png"))).ok()?;
+    }
+    Some(dir)
 }
 
 impl ksni::Tray for Sni {
@@ -25,6 +43,15 @@ impl ksni::Tray for Sni {
             Some(t) => format!("LightSnap {t}"),
             None => "LightSnap".into(),
         }
+    }
+    fn icon_theme_path(&self) -> String {
+        self.icon_dir.as_ref().map(|d| d.display().to_string()).unwrap_or_default()
+    }
+    fn icon_name(&self) -> String {
+        if self.icon_dir.is_none() {
+            return String::new();
+        }
+        (if self.recording { ICON_REC } else { ICON_IDLE }).into()
     }
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
         // RGBA → ARGB, as the spec wants.
@@ -90,7 +117,7 @@ pub struct Tray(Handle<Sni>);
 
 impl Tray {
     pub fn new(menu: Vec<MenuEntry>, sink: Sink) -> Option<Self> {
-        let sni = Sni { menu, recording: false, title: None, sink };
+        let sni = Sni { menu, recording: false, title: None, sink, icon_dir: write_icons() };
         match sni.spawn() {
             Ok(h) => Some(Self(h)),
             Err(e) => {

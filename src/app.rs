@@ -479,6 +479,12 @@ impl LightSnap {
         self.visible || self.select.is_some() || self.prefs.open
     }
 
+    /// Linux: the record area is being chosen; the window opens full screen for it.
+    #[cfg(target_os = "linux")]
+    pub fn selecting(&self) -> bool {
+        self.select.is_some()
+    }
+
     /// Linux: the work of a frame while no window is open: tray and shortcut events,
     /// finished captures, the recording timer.
     #[cfg(target_os = "linux")]
@@ -621,6 +627,7 @@ impl LightSnap {
         }
         let (tx, rx) = channel();
         let ctx2 = ctx.clone();
+        let cursor = self.settings.capture_cursor;
         let sound = self.settings.sound && !for_record;
         std::thread::spawn(move || {
             if was_visible {
@@ -628,7 +635,7 @@ impl LightSnap {
             }
             let r = if for_record {
                 // A frozen picture of every screen to choose the area on.
-                platform::capture_all_screens(platform::displays().len())
+                platform::capture_all_screens(platform::displays().len(), cursor)
             } else {
                 platform::run_capture(kind, sound).into_iter().collect()
             };
@@ -1848,7 +1855,9 @@ impl LightSnap {
 
     // ------------------------------------------------------------ recording overlays
 
-    fn select_overlay(&mut self, ctx: &egui::Context) -> SelectOut {
+    /// `root`: on Linux the record area is chosen in the main window itself (full screen):
+    /// Wayland can neither place windows nor reliably put a new one in front.
+    fn select_overlay(&mut self, ctx: &egui::Context, mut root: Option<&mut Ui>) -> SelectOut {
         let Some(sel) = &mut self.select else { return SelectOut::None };
         let settings = &mut self.settings;
         let devices = &self.devices;
@@ -1886,7 +1895,7 @@ impl LightSnap {
                 .with_resizable(false)
                 .with_taskbar(false)
                 .with_has_shadow(false);
-            let res = crate::show_immediate(ctx, ViewportId::from_hash_of(("lightsnap_select", si)), builder, |ui, _| {
+            let body = |ui: &mut Ui, _: egui::ViewportClass| {
                 let ctx = ui.ctx().clone();
                 if !any_focus_sent && si == mouse_i {
                     any_focus_sent = true;
@@ -2081,7 +2090,15 @@ impl LightSnap {
                     out = SelectOut::Record(rect.unwrap_or(scr.bounds));
                 }
                 out
-            });
+            };
+            let res = match root.as_deref_mut() {
+                Some(ui) if si == 0 => {
+                    let mut body = body;
+                    body(ui, egui::ViewportClass::Root)
+                }
+                Some(_) => SelectOut::None,
+                None => crate::show_immediate(ctx, ViewportId::from_hash_of(("lightsnap_select", si)), builder, body),
+            };
             if !matches!(res, SelectOut::None) {
                 out = res;
             }
@@ -2348,7 +2365,8 @@ impl eframe::App for LightSnap {
         let mut action = None;
 
         // Area selection before a recording.
-        let mut sel_out = self.select_overlay(&ctx);
+        let selecting_in_root = cfg!(target_os = "linux") && self.select.is_some();
+        let mut sel_out = self.select_overlay(&ctx, if selecting_in_root { Some(&mut *ui) } else { None });
         if test_env("LS_TEST_AUTOREC") && self.select.is_some() {
             let t = *self.test_select_since.get_or_insert_with(Instant::now);
             if t.elapsed() > Duration::from_millis(1500) {
@@ -2363,6 +2381,13 @@ impl eframe::App for LightSnap {
             SelectOut::None => {}
             SelectOut::Cancel => {
                 self.select = None;
+                platform::end_screen_session();
+                if selecting_in_root {
+                    // Back to a normal window.
+                    ctx.send_viewport_cmd(ViewportCommand::Fullscreen(false));
+                    ctx.send_viewport_cmd(ViewportCommand::Decorations(true));
+                    ctx.send_viewport_cmd(ViewportCommand::InnerSize(vec2(980.0, 620.0)));
+                }
                 self.show_window(&ctx);
             }
             SelectOut::Record(r) => {
@@ -2381,10 +2406,29 @@ impl eframe::App for LightSnap {
                     .unwrap_or((0, Rect::from_min_size(Pos2::ZERO, self.monitor), self.native_ppp));
                 self.select = None;
                 self.start_recording(&ctx, r, screen, bounds, scale);
+                if selecting_in_root {
+                    if self.recording.is_some() {
+                        // The main window was the selection; it goes away for the recording.
+                        self.visible = true;
+                        self.hide_window(&ctx);
+                    } else {
+                        ctx.send_viewport_cmd(ViewportCommand::Fullscreen(false));
+                        ctx.send_viewport_cmd(ViewportCommand::Decorations(true));
+                        ctx.send_viewport_cmd(ViewportCommand::InnerSize(vec2(980.0, 620.0)));
+                    }
+                }
             }
         }
-        if let Some(a) = self.recording_overlays(&ctx) {
-            action = Some(a);
+        if selecting_in_root {
+            // The main window shows only the selection this frame.
+            return;
+        }
+        // Wayland can't place the frame around the area or the control bar next to it;
+        // on Linux the recording is controlled from the tray and the shortcuts.
+        if !cfg!(target_os = "linux") {
+            if let Some(a) = self.recording_overlays(&ctx) {
+                action = Some(a);
+            }
         }
 
         // Settings, in a window of their own.

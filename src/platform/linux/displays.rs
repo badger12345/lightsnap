@@ -69,6 +69,13 @@ pub fn displays() -> Vec<Display> {
         .filter(|d| d.bounds.width() > 0.0)
         .collect();
     list.sort_by(|a, b| (a.bounds.min.x + a.bounds.min.y).total_cmp(&(b.bounds.min.x + b.bounds.min.y)));
+    // While a screen is shared for recording, it comes first: it is screen 0 to the recorder.
+    if let Some((x, y)) = super::recording::shared_screen_position() {
+        if let Some(i) = list.iter().position(|d| d.bounds.min == pos2(x as f32, y as f32)) {
+            let d = list.remove(i);
+            list.insert(0, d);
+        }
+    }
     list
 }
 

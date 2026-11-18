@@ -117,6 +117,10 @@ fn run_linux(
             let mut options = make_options();
             options.run_and_return = true;
             options.viewport = options.viewport.with_visible(true);
+            if state.borrow().selecting() {
+                // The record area is chosen in this window, over the whole screen.
+                options.viewport = options.viewport.with_fullscreen(true).with_decorations(false);
+            }
             let st = state.clone();
             let reattach = !first;
             eframe::run_native_ext(

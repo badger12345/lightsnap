@@ -32,8 +32,9 @@ pub fn run_capture(kind: CaptureKind, sound: bool) -> Option<PathBuf> {
     if ok && out.exists() { Some(out) } else { None }
 }
 
-/// Takes one silent picture of every screen (main screen first).
-pub fn capture_all_screens(count: usize) -> Vec<PathBuf> {
+/// Takes one silent picture of every screen (main screen first), to choose the record
+/// area on. `cursor` is for systems that share the screen first (Linux).
+pub fn capture_all_screens(count: usize, _cursor: bool) -> Vec<PathBuf> {
     let files: Vec<PathBuf> = (0..count.max(1)).map(|i| temp_file(&format!("screen{i}"), "png")).collect();
     let ok = Command::new("/usr/sbin/screencapture")
         .arg("-x")

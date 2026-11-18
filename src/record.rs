@@ -207,6 +207,7 @@ impl Recorder {
     /// Stops and throws the recording away.
     pub fn cancel(mut self) {
         self.stop_segment();
+        platform::end_screen_session();
         for s in &self.segments {
             let _ = std::fs::remove_file(s);
         }
@@ -215,6 +216,7 @@ impl Recorder {
     /// Stops and writes the video into `dest_dir`. Blocks for a moment.
     pub fn finish(mut self, dest_stem_path: PathBuf) -> Result<PathBuf, String> {
         self.stop_segment();
+        platform::end_screen_session();
         let segments: Vec<PathBuf> = self.segments.iter().filter(|p| p.exists()).cloned().collect();
         if segments.is_empty() {
             return Err(format!("No video was recorded. {}", platform::SCREEN_PERMISSION_HINT));
