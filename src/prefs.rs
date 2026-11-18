@@ -240,14 +240,14 @@ impl Prefs {
         });
         separator(ui);
         row(ui, "External Image Editor:", |ui| {
-            let name = app_name(&s.external_editor);
+            let name = crate::platform::editor_label(&s.external_editor);
             egui::ComboBox::from_id_salt("ext_editor").width(CTRL_W).selected_text(name).show_ui(ui, |ui| {
-                for app in ["Preview", "Photos"] {
-                    out.changed |= ui.selectable_value(&mut s.external_editor, app.to_string(), app).changed();
+                for (value, label) in crate::platform::EDITOR_APPS {
+                    out.changed |= ui.selectable_value(&mut s.external_editor, value.to_string(), *label).changed();
                 }
-                if !matches!(s.external_editor.as_str(), "Preview" | "Photos") {
+                if !crate::platform::EDITOR_APPS.iter().any(|(v, _)| *v == s.external_editor) {
                     let cur = s.external_editor.clone();
-                    ui.selectable_label(true, app_name(&cur));
+                    let _ = ui.selectable_label(true, crate::platform::editor_label(&cur));
                 }
                 if ui.selectable_label(false, "Choose…").clicked() {
                     out.pick_editor_app = true;
@@ -268,7 +268,10 @@ impl Prefs {
             if self.about {
                 ui.label(
                     egui::RichText::new(
-                        "LightSnap 0.1 — screenshots and screen recordings that stay on this Mac.\nNo account, no cloud, nothing is uploaded.",
+                        format!(
+                            "LightSnap 0.1 — screenshots and screen recordings that stay on {}.\nNo account, no cloud, nothing is uploaded.",
+                            crate::platform::THIS_COMPUTER
+                        ),
                     )
                     .color(DIM),
                 );
@@ -397,7 +400,9 @@ impl Prefs {
                 } else if let Some(code) = key_to_code(key) {
                     let is_fkey = code.starts_with('F') && code.len() > 1 && code[1..].chars().all(|c| c.is_ascii_digit());
                     if m.mac_cmd || m.command || m.alt || m.ctrl || is_fkey {
-                        let hk = Hotkey { cmd: m.mac_cmd || m.command, alt: m.alt, ctrl: m.ctrl, shift: m.shift, code };
+                        // On Linux `command` is Ctrl; `cmd` stands for it, so `ctrl` stays off.
+                        let ctrl = m.ctrl && cfg!(target_os = "macos");
+                        let hk = Hotkey { cmd: m.mac_cmd || m.command, alt: m.alt, ctrl, shift: m.shift, code };
                         // One shortcut, one action.
                         let others: Vec<String> = HOTKEY_ACTIONS
                             .iter()
@@ -514,14 +519,6 @@ fn short_path(p: &std::path::Path) -> String {
         }
         None => s,
     }
-}
-
-pub fn app_name(app: &str) -> String {
-    std::path::Path::new(app)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(app)
-        .to_string()
 }
 
 /// Maps a pressed key to a W3C key code ("KeyA", "Digit4", "F5", ...).

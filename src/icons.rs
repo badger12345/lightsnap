@@ -182,7 +182,8 @@ pub fn draw(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 Stroke::new(1.6 * u.max(0.8), color),
                 egui::StrokeKind::Middle,
             );
-            p.text(c, egui::Align2::CENTER_CENTER, "⌘", egui::FontId::proportional(13.0 * u), color);
+            let glyph = if cfg!(target_os = "linux") { "⌨" } else { "⌘" };
+            p.text(c, egui::Align2::CENTER_CENTER, glyph, egui::FontId::proportional(13.0 * u), color);
         }
         Icon::Gear => {
             for i in 0..8 {

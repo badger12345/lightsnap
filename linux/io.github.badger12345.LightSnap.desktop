@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=LightSnap
+Comment=Screenshots and screen recordings, saved locally
+Exec=lightsnap %f
+Icon=io.github.badger12345.LightSnap
+Categories=Utility;Graphics;
+Keywords=screenshot;screen;recording;capture;
+MimeType=image/png;image/jpeg;video/mp4;
+StartupWMClass=io.github.badger12345.LightSnap
+Terminal=false

@@ -100,8 +100,10 @@ fn action_from_id(id: &str, delay: u32) -> Option<Action> {
 }
 
 enum AppEvent {
+    /// Whether the person allowed screenshots (see `ask_permission`).
+    Permission(bool),
     Menu(String),
-    Hotkey(u32),
+    Hotkey(String),
     Dialog(DialogKind, Option<PathBuf>),
 }
 
@@ -116,6 +118,7 @@ pub enum DialogKind {
 }
 
 struct Job {
+    kind: CaptureKind,
     /// The captured picture(s): one per screen when preparing a recording; empty if cancelled.
     rx: Receiver<Vec<PathBuf>>,
     for_record: bool,
@@ -196,15 +199,13 @@ pub struct LightSnap {
     copy_after_save: bool,
     ffmpeg: Option<PathBuf>,
     devices: Arc<Mutex<Option<Devices>>>,
-    tray: Option<tray_icon::TrayIcon>,
+    tray: Option<platform::Tray>,
     tray_recording: bool,
     events: Receiver<AppEvent>,
     _tx: Sender<AppEvent>,
-    _hotkeys: Option<global_hotkey::GlobalHotKeyManager>,
-    hotkey_map: Vec<(u32, Action)>,
+    hotkeys: Option<platform::Hotkeys>,
     toast: Option<Toast>,
     prefs: crate::prefs::Prefs,
-    registered: Vec<global_hotkey::hotkey::HotKey>,
     background: bool,
     test_prefs_done: bool,
     /// Last editor version put on the clipboard, and when the next copy is due.
@@ -226,11 +227,14 @@ pub struct LightSnap {
     pending_pos: Option<Pos2>,
     /// How often lost uploads were resent outside of choosing a record area.
     resent: u32,
+    /// Show the note that asks to allow screenshots (Linux, see `permission_prompt`).
+    perm_prompt: bool,
+    perm_asking: bool,
 }
 
 impl LightSnap {
-    pub fn new(cc: &eframe::CreationContext<'_>, screenshot: Option<PathBuf>, open: Option<PathBuf>, quiet: bool, background: bool) -> Self {
-        let ctx = cc.egui_ctx.clone();
+    pub fn new(ctx: &egui::Context, screenshot: Option<PathBuf>, open: Option<PathBuf>, quiet: bool, background: bool) -> Self {
+        let ctx = ctx.clone();
         let (font, font_bytes) = crate::doc::load_font();
         setup_style(&ctx, font_bytes);
         let settings = Settings::load();
@@ -256,11 +260,9 @@ impl LightSnap {
             tray_recording: false,
             events: rx,
             _tx: tx.clone(),
-            _hotkeys: None,
-            hotkey_map: Vec::new(),
+            hotkeys: None,
             toast: None,
             prefs: Default::default(),
-            registered: Vec::new(),
             background,
             test_prefs_done: false,
             clip_version: 0,
@@ -280,19 +282,24 @@ impl LightSnap {
             pending_size: None,
             pending_pos: None,
             resent: 0,
+            perm_prompt: false,
+            perm_asking: false,
         };
+        if !quiet && !platform::screenshot_allowed() {
+            app.perm_prompt = true;
+        }
 
         // The menu-bar icon and global shortcuts are skipped for a quick check picture.
         if !quiet || test_env("LS_TEST_TRAY") {
-            app.tray = build_tray(&app.settings);
-            {
+            let sink = {
                 let tx = tx.clone();
                 let ctx = ctx.clone();
-                tray_icon::menu::MenuEvent::set_event_handler(Some(move |e: tray_icon::menu::MenuEvent| {
-                    let _ = tx.send(AppEvent::Menu(e.id.0.clone()));
+                std::sync::Arc::new(move |id: String| {
+                    let _ = tx.send(AppEvent::Menu(id));
                     ctx.request_repaint();
-                }));
-            }
+                })
+            };
+            app.tray = platform::Tray::new(build_menu(false, &app.settings), sink);
             if app.settings.hotkeys {
                 app.setup_hotkeys(&ctx, tx);
             }
@@ -316,15 +323,11 @@ impl LightSnap {
     }
 
     fn setup_hotkeys(&mut self, ctx: &egui::Context, tx: Sender<AppEvent>) {
-        let Ok(mgr) = global_hotkey::GlobalHotKeyManager::new() else { return };
         let ctx = ctx.clone();
-        global_hotkey::GlobalHotKeyEvent::set_event_handler(Some(move |e: global_hotkey::GlobalHotKeyEvent| {
-            if e.state == global_hotkey::HotKeyState::Pressed {
-                let _ = tx.send(AppEvent::Hotkey(e.id));
-                ctx.request_repaint();
-            }
+        self.hotkeys = platform::Hotkeys::new(std::sync::Arc::new(move |id: String| {
+            let _ = tx.send(AppEvent::Hotkey(id));
+            ctx.request_repaint();
         }));
-        self._hotkeys = Some(mgr);
         self.register_hotkeys();
     }
 
@@ -345,31 +348,25 @@ impl LightSnap {
     }
 
     fn unregister_hotkeys(&mut self) {
-        if let Some(mgr) = &self._hotkeys {
-            let _ = mgr.unregister_all(&self.registered);
+        if let Some(h) = &mut self.hotkeys {
+            h.set(&[]);
         }
-        self.registered.clear();
-        self.hotkey_map.clear();
     }
 
     /// (Re)registers the global shortcuts from the settings.
     fn register_hotkeys(&mut self) {
-        self.unregister_hotkeys();
-        if !self.settings.hotkeys {
-            return;
-        }
-        let Some(mgr) = &self._hotkeys else { return };
-        let ids = crate::settings::HOTKEY_ACTIONS
-            .iter()
-            .chain(crate::settings::VIDEO_HOTKEY_ACTIONS.iter())
-            .map(|(id, _)| *id);
-        for id in ids {
-            let Some(hk) = self.settings.hotkey(id).and_then(|k| to_global_hotkey(&k)) else { continue };
-            let Some(action) = action_from_id(id, self.settings.delay_secs) else { continue };
-            if mgr.register(hk).is_ok() {
-                self.registered.push(hk);
-                self.hotkey_map.push((hk.id(), action));
-            }
+        let keys: Vec<(String, crate::settings::Hotkey)> = if self.settings.hotkeys {
+            crate::settings::HOTKEY_ACTIONS
+                .iter()
+                .chain(crate::settings::VIDEO_HOTKEY_ACTIONS.iter())
+                .filter(|(id, _)| action_from_id(id, self.settings.delay_secs).is_some())
+                .filter_map(|(id, _)| self.settings.hotkey(id).map(|k| (id.to_string(), k)))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if let Some(h) = &mut self.hotkeys {
+            h.set(&keys);
         }
     }
 
@@ -424,9 +421,91 @@ impl LightSnap {
         ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
     }
 
+    /// Linux: GNOME asks once whether LightSnap may take screenshots, and only while
+    /// LightSnap's window is in front. This note lets the person do that.
+    fn permission_prompt(&mut self, ctx: &egui::Context) {
+        if !self.perm_prompt || self.select.is_some() {
+            return;
+        }
+        let mut later = false;
+        egui::Modal::new(Id::new("perm_prompt")).show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.label(egui::RichText::new("Allow screenshots").size(16.0).strong().color(TEXT));
+            ui.add_space(6.0);
+            ui.label(
+                "Full-screen and timed captures and screen recordings need your permission once. \
+                 Your desktop asks for it only while this window is in front.",
+            );
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                let ask = ui.add_enabled(
+                    !self.perm_asking,
+                    egui::Button::new(egui::RichText::new("Allow…").color(Color32::WHITE)).fill(BLUE),
+                );
+                if ask.clicked() {
+                    self.perm_asking = true;
+                    let tx = self._tx.clone();
+                    let ctx = ctx.clone();
+                    std::thread::spawn(move || {
+                        let ok = platform::ask_screenshot_permission() && platform::screenshot_allowed();
+                        let _ = tx.send(AppEvent::Permission(ok));
+                        ctx.request_repaint();
+                    });
+                }
+                if ui.button("Later").clicked() {
+                    later = true;
+                }
+            });
+        });
+        if later {
+            self.perm_prompt = false;
+        }
+    }
+
     fn hide_window(&mut self, ctx: &egui::Context) {
         ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+        // Wayland can't hide a window: close it. main.rs keeps the app running and opens
+        // the window again when it is needed (see `wants_window`).
+        #[cfg(target_os = "linux")]
+        if self.visible {
+            ctx.send_viewport_cmd(ViewportCommand::Close);
+        }
         self.visible = false;
+    }
+
+    /// Linux: whether the window has to be open (it is shown, or the record area is being chosen).
+    #[cfg(target_os = "linux")]
+    pub fn wants_window(&self) -> bool {
+        self.visible || self.select.is_some() || self.prefs.open
+    }
+
+    /// Linux: the work of a frame while no window is open: tray and shortcut events,
+    /// finished captures, the recording timer.
+    #[cfg(target_os = "linux")]
+    pub fn tick_hidden(&mut self, ctx: &egui::Context) {
+        self.handle_events(ctx);
+    }
+
+    /// Linux: the window was opened again with a new graphics context, so every picture
+    /// and letter has to be sent to the graphics card again.
+    #[cfg(target_os = "linux")]
+    pub fn reattach(&mut self, ctx: &egui::Context) {
+        self.checker = None;
+        if let Some(ed) = &mut self.ed {
+            ed.forget_texture();
+        }
+        if let Some(v) = &mut self.video {
+            v.tex = None;
+            let pos = v.pos;
+            v.seek(ctx, pos);
+        }
+        if let Some(sel) = &mut self.select {
+            for scr in &mut sel.screens {
+                scr.tex = None;
+            }
+        }
+        // See resend_lost_uploads: this always rebuilds the font texture.
+        ctx.set_glyph_rasterizers(Vec::new());
     }
 
     fn busy(&self) -> bool {
@@ -556,7 +635,7 @@ impl LightSnap {
             let _ = tx.send(r);
             ctx2.request_repaint();
         });
-        self.job = Some(Job { rx, for_record, show_after: was_visible });
+        self.job = Some(Job { rx, kind, for_record, show_after: was_visible });
     }
 
     fn open_file(&mut self, ctx: &egui::Context, p: &Path) {
@@ -883,10 +962,9 @@ impl LightSnap {
         }
         self.tray_recording = on;
         if let Some(t) = &self.tray {
-            let (icon, template) = tray_image(on);
-            let _ = t.set_icon_with_as_template(icon, template);
-            t.set_menu(Some(Box::new(build_menu(on, &self.settings))));
-            t.set_title(if on { Some("00:00") } else { None::<&str> });
+            t.set_recording(on);
+            t.set_menu(build_menu(on, &self.settings));
+            t.set_title(if on { Some("00:00") } else { None });
         }
     }
 
@@ -917,6 +995,14 @@ impl LightSnap {
                 }
                 continue;
             }
+            if let AppEvent::Permission(ok) = ev {
+                self.perm_asking = false;
+                self.perm_prompt = !ok;
+                if ok {
+                    self.toast("Screenshots allowed", None);
+                }
+                continue;
+            }
             if let AppEvent::Menu(id) = &ev {
                 if let Some(path) = id.strip_prefix("recent:") {
                     let p = PathBuf::from(path);
@@ -935,8 +1021,8 @@ impl LightSnap {
             }
             let action = match ev {
                 AppEvent::Menu(id) => action_from_id(&id, self.settings.delay_secs),
-                AppEvent::Hotkey(id) => self.hotkey_map.iter().find(|(i, _)| *i == id).map(|(_, a)| *a),
-                AppEvent::Dialog(..) => None,
+                AppEvent::Hotkey(id) => action_from_id(&id, self.settings.delay_secs),
+                AppEvent::Dialog(..) | AppEvent::Permission(_) => None,
             };
             if let Some(a) = action {
                 // During a recording the record shortcut finishes it.
@@ -947,7 +1033,7 @@ impl LightSnap {
 
         if let Some(job) = &self.job {
             if let Ok(res) = job.rx.try_recv() {
-                let (for_record, show_after) = (job.for_record, job.show_after);
+                let (kind, for_record, show_after) = (job.kind, job.for_record, job.show_after);
                 self.job = None;
                 match (res.first().cloned(), for_record) {
                     (Some(p), false) => self.handle_capture(ctx, p, show_after),
@@ -982,7 +1068,8 @@ impl LightSnap {
                         }
                         if screens.is_empty() {
                             self.show_window(ctx);
-                            self.toast("Could not read the screen. Allow screen recording in System Settings › Privacy & Security.", None);
+                            self.perm_prompt = !platform::screenshot_allowed();
+                            self.toast(format!("Could not read the screen. {}", platform::SCREEN_PERMISSION_HINT), None);
                         } else {
                             // Start with a frame of 75% of the screen under the mouse, centred.
                             let mouse = platform::mouse_position().unwrap_or(screens[0].bounds.center());
@@ -1003,10 +1090,15 @@ impl LightSnap {
                     }
                     (None, true) => {
                         self.show_window(ctx);
-                        self.toast("Could not read the screen. Allow screen recording in System Settings › Privacy & Security.", None);
+                        self.perm_prompt = !platform::screenshot_allowed();
+                        self.toast(format!("Could not read the screen. {}", platform::SCREEN_PERMISSION_HINT), None);
                     }
                     (None, false) => {
-                        if show_after {
+                        let asks = matches!(kind, CaptureKind::Area | CaptureKind::Window);
+                        if !asks && !platform::screenshot_allowed() {
+                            self.perm_prompt = true;
+                            self.show_window(ctx);
+                        } else if show_after {
                             self.show_window(ctx);
                         }
                     }
@@ -1069,7 +1161,7 @@ impl LightSnap {
         if self.tray_menu_dirty && self.recording.is_none() {
             self.tray_menu_dirty = false;
             if let Some(t) = &self.tray {
-                t.set_menu(Some(Box::new(build_menu(false, &self.settings))));
+                t.set_menu(build_menu(false, &self.settings));
             }
         }
 
@@ -1088,7 +1180,7 @@ impl LightSnap {
                     let paused = r.rec.is_paused();
                     let title = format!("{}{}", if paused { "❚❚ " } else { "" }, record::format_elapsed(r.rec.elapsed()));
                     if let Some(t) = &self.tray {
-                        t.set_title(Some(title));
+                        t.set_title(Some(&title));
                     }
                 }
                 ctx.request_repaint_after(Duration::from_millis(500));
@@ -1108,12 +1200,12 @@ impl LightSnap {
             if self.video.is_none() {
                 group(ui, 2, TOOL_W, BAR_ITEM_H, |ui| {
                     let (cu, cr) = self.ed.as_ref().map(|e| (e.can_undo(), e.can_redo())).unwrap_or((false, false));
-                    if icon_button(ui, Icon::Undo, false, cu, vec2(TOOL_W, BAR_ITEM_H - 2.0), "Undo (⌘Z)").clicked() {
+                    if icon_button(ui, Icon::Undo, false, cu, vec2(TOOL_W, BAR_ITEM_H - 2.0), &format!("Undo ({})", crate::settings::keys_text(false, "Z"))).clicked() {
                         if let Some(e) = &mut self.ed {
                             e.undo();
                         }
                     }
-                    if icon_button(ui, Icon::Redo, false, cr, vec2(TOOL_W, BAR_ITEM_H - 2.0), "Redo (⇧⌘Z)").clicked() {
+                    if icon_button(ui, Icon::Redo, false, cr, vec2(TOOL_W, BAR_ITEM_H - 2.0), &format!("Redo ({})", crate::settings::keys_text(true, "Z"))).clicked() {
                         if let Some(e) = &mut self.ed {
                             e.redo();
                         }
@@ -1149,7 +1241,7 @@ impl LightSnap {
                         self.save_video(true);
                     }
                 }
-                copy.on_hover_text("Copy to the clipboard (⌘C). Nothing is uploaded.");
+                copy.on_hover_text(format!("Copy to the clipboard ({}). Nothing is uploaded.", crate::settings::keys_text(false, "C")));
                 ui.spacing_mut().item_spacing.x = 10.0;
                 let saving = self.video_saving.is_some();
                 let label = if saving { "Saving…" } else { "Save" };
@@ -1161,7 +1253,7 @@ impl LightSnap {
                         self.save_video(false);
                     }
                 }
-                save.on_hover_text(format!("Save to {} (⌘S)", short_path(&self.settings.save_dir)));
+                save.on_hover_text(format!("Save to {} ({})", short_path(&self.settings.save_dir), crate::settings::keys_text(false, "S")));
 
                 // File name with its extension.
                 let ext = if let Some(v) = &self.video {
@@ -1230,14 +1322,14 @@ impl LightSnap {
             self.save_picture(true);
         }
         if self.ed.is_some() {
-            let app = crate::prefs::app_name(&self.settings.external_editor);
+            let app = platform::editor_label(&self.settings.external_editor);
             if ui.button(format!("Open in {app}")).clicked() {
                 self.open_in_external_editor();
             }
         }
         let saved = self.ed.as_ref().and_then(|e| e.saved.clone()).or_else(|| self.video.as_ref().and_then(|v| v.saved.clone()));
         if let Some(p) = saved {
-            if ui.button("Show in Finder").clicked() {
+            if ui.button(format!("Show in {}", platform::FILE_MANAGER)).clicked() {
                 platform::reveal_path(&p);
             }
             if ui.button("Copy file path").clicked() {
@@ -1247,13 +1339,13 @@ impl LightSnap {
         }
         if self.video.is_some() {
             if let Some(v) = &self.video {
-                if ui.button("Open in QuickTime Player").clicked() {
+                if ui.button(format!("Open in {}", platform::VIDEO_PLAYER)).clicked() {
                     platform::open_path(v.saved.as_ref().unwrap_or(&v.path));
                 }
             }
         }
         if self.ed.is_some() || self.video.is_some() {
-            if ui.add(egui::Button::new("Close").shortcut_text("⌘W")).clicked() {
+            if ui.add(egui::Button::new("Close").shortcut_text(crate::settings::keys_text(false, "W"))).clicked() {
                 self.ed = None;
                 self.video = None;
                 self.recent_dirty = true;
@@ -1389,7 +1481,7 @@ impl LightSnap {
                         )
                         .sense(Sense::click()),
                     );
-                    if r.on_hover_text("Pinch to zoom, two fingers to move. Click or ⌘0 to fit the window.").clicked() {
+                    if r.on_hover_text(format!("Pinch to zoom, two fingers to move. Click or {} to fit the window.", crate::settings::keys_text(false, "0"))).clicked() {
                         e.reset_view();
                     }
                 }
@@ -1424,7 +1516,10 @@ impl LightSnap {
                     ui.set_width(card_w - 44.0);
                     ui.label(egui::RichText::new("Capture something").size(18.0).color(TEXT).strong());
                     ui.label(
-                        egui::RichText::new("Screenshots and screen recordings stay on this Mac. Nothing is uploaded.")
+                        egui::RichText::new(format!(
+                            "Screenshots and screen recordings stay on {}. Nothing is uploaded.",
+                            platform::THIS_COMPUTER
+                        ))
                             .color(DIM_TEXT),
                     );
                     ui.add_space(14.0);
@@ -1512,7 +1607,11 @@ impl LightSnap {
             let msg = if v.can_preview() {
                 "Loading preview…"
             } else {
-                "Preview and trimming need ffmpeg (brew install ffmpeg). You can still save the video or open it in QuickTime Player."
+                &format!(
+                    "Preview and trimming need ffmpeg ({}). You can still save the video or open it in {}.",
+                    platform::FFMPEG_HINT,
+                    platform::VIDEO_PLAYER
+                )
             };
             ui.painter().text(rect.center(), Align2::CENTER_CENTER, msg, FontId::proportional(15.0), DIM_TEXT);
         }
@@ -2172,8 +2271,10 @@ impl eframe::App for LightSnap {
             self.run_action(ctx, Action::Settings);
         }
 
-        // Closing the window keeps LightSnap in the menu bar.
+        // Closing the window keeps LightSnap in the menu bar. On Linux the window really
+        // closes (Wayland can't hide it) and main.rs keeps the app running.
         if ctx.input(|i| i.viewport().close_requested()) && self.tray.is_some() {
+            #[cfg(not(target_os = "linux"))]
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
             if let Some(v) = &mut self.video {
                 v.stop();
@@ -2300,7 +2401,9 @@ impl eframe::App for LightSnap {
             self.spawn_dialog(&ctx, DialogKind::SaveDir, d.pick_folder());
         }
         if out.pick_editor_app {
-            let d = rfd::AsyncFileDialog::new().set_directory("/Applications").add_filter("Application", &["app"]);
+            let d = rfd::AsyncFileDialog::new()
+                .set_directory(platform::EDITOR_DIR)
+                .add_filter("Application", &[platform::EDITOR_EXT]);
             self.spawn_dialog(&ctx, DialogKind::EditorApp, d.pick_file());
         }
         if (out.hotkeys_changed || out.capture_ended) && self.prefs.capturing.is_none() {
@@ -2348,12 +2451,14 @@ impl eframe::App for LightSnap {
                 ui.painter().rect_filled(r, 8.0, Color32::from_black_alpha(215));
                 ui.painter().galley(r.min + vec2(14.0, 8.0), galley, Color32::WHITE);
                 if let Some(p) = t.path.clone() {
-                    if ui.interact(r, Id::new("toast"), Sense::click()).on_hover_text("Show in Finder").clicked() {
+                    if ui.interact(r, Id::new("toast"), Sense::click()).on_hover_text(format!("Show in {}", platform::FILE_MANAGER)).clicked() {
                         platform::reveal_path(&p);
                     }
                 }
             }
         });
+
+        self.permission_prompt(&ctx);
 
         // ⌘W closes the picture editor (or video) and puts the window away, like ⌘W in other Mac apps.
         if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::W)) {
@@ -2508,46 +2613,6 @@ fn capture_menu(ui: &mut Ui, st: &Settings) -> Option<Action> {
         a = Some(Action::OpenLatest);
     }
     a
-}
-
-/// The global shortcut for a settings hotkey.
-fn to_global_hotkey(k: &crate::settings::Hotkey) -> Option<global_hotkey::hotkey::HotKey> {
-    use global_hotkey::hotkey::{Code, HotKey, Modifiers as M};
-    let code: Code = k.code.parse().ok()?;
-    let mut m = M::empty();
-    if k.cmd {
-        m |= M::META;
-    }
-    if k.alt {
-        m |= M::ALT;
-    }
-    if k.ctrl {
-        m |= M::CONTROL;
-    }
-    if k.shift {
-        m |= M::SHIFT;
-    }
-    Some(HotKey::new(if m.is_empty() { None } else { Some(m) }, code))
-}
-
-/// The same shortcut shown in the menu-bar menu.
-fn to_accelerator(k: &crate::settings::Hotkey) -> Option<tray_icon::menu::accelerator::Accelerator> {
-    use tray_icon::menu::accelerator::{Accelerator, Code, Modifiers as M};
-    let code: Code = k.code.parse().ok()?;
-    let mut m = M::empty();
-    if k.cmd {
-        m |= M::META;
-    }
-    if k.alt {
-        m |= M::ALT;
-    }
-    if k.ctrl {
-        m |= M::CONTROL;
-    }
-    if k.shift {
-        m |= M::SHIFT;
-    }
-    Some(Accelerator::new(m, code))
 }
 
 /// A joined row of `n` buttons, each `w` wide; the group is exactly `h` tall.
@@ -2715,38 +2780,6 @@ fn setup_style(ctx: &egui::Context, font_bytes: Vec<u8>) {
 
 // ---------------------------------------------------------------- menu bar
 
-fn tray_image(recording: bool) -> (Option<tray_icon::Icon>, bool) {
-    use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Transform};
-    let n = 44u32;
-    let Some(mut pm) = Pixmap::new(n, n) else { return (None, false) };
-    let mut paint = Paint::default();
-    paint.anti_alias = true;
-    if recording {
-        paint.set_color_rgba8(230, 40, 40, 255);
-        if let Some(c) = PathBuilder::from_circle(22.0, 22.0, 13.0) {
-            pm.fill_path(&c, &paint, FillRule::Winding, Transform::identity(), None);
-        }
-    } else {
-        paint.set_color_rgba8(0, 0, 0, 255);
-        if let Some(r) = tiny_skia::Rect::from_xywh(5.0, 13.0, 34.0, 23.0) {
-            pm.fill_rect(r, &paint, Transform::identity(), None);
-        }
-        if let Some(r) = tiny_skia::Rect::from_xywh(15.0, 8.0, 14.0, 6.0) {
-            pm.fill_rect(r, &paint, Transform::identity(), None);
-        }
-        paint.blend_mode = tiny_skia::BlendMode::Clear;
-        if let Some(c) = PathBuilder::from_circle(22.0, 24.5, 7.5) {
-            pm.fill_path(&c, &paint, FillRule::Winding, Transform::identity(), None);
-        }
-        paint.blend_mode = tiny_skia::BlendMode::SourceOver;
-        if let Some(c) = PathBuilder::from_circle(22.0, 24.5, 4.0) {
-            pm.fill_path(&c, &paint, FillRule::Winding, Transform::identity(), None);
-        }
-    }
-    let icon = tray_icon::Icon::from_rgba(pm.take(), n, n).ok();
-    (icon, !recording)
-}
-
 /// Where the newest screenshot is kept (one file, replaced by each new capture).
 fn latest_capture_path() -> Option<PathBuf> {
     dirs::config_dir().map(|d| d.join("LightSnap").join("latest-capture.png"))
@@ -2760,59 +2793,75 @@ fn is_picture(p: &Path) -> bool {
 
 /// The menu-bar menu, laid out like the original's but without the cloud items:
 /// "Latest Uploads" becomes a list of recent local snaps, "Storage" opens the save folder.
-fn build_menu(recording: bool, st: &Settings) -> tray_icon::menu::Menu {
-    use tray_icon::menu::accelerator::{Accelerator, Code, Modifiers as M};
-    use tray_icon::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-    let menu = Menu::new();
-    let item = |id: &str, text: &str| MenuItem::with_id(id, text, true, None);
+fn build_menu(recording: bool, st: &Settings) -> Vec<platform::MenuEntry> {
+    use platform::MenuEntry;
+    let item = |id: &str, text: &str| MenuEntry::Item { id: id.into(), text: text.into(), enabled: true, key: None };
     // Menu items show the shortcut chosen in Settings › Hotkeys.
-    let keyed = |id: &str, key_id: &str, text: &str| {
-        let acc = if st.hotkeys { st.hotkey(key_id).and_then(|k| to_accelerator(&k)) } else { None };
-        MenuItem::with_id(id, text, true, acc)
+    let keyed = |id: &str, key_id: &str, text: &str| MenuEntry::Item {
+        id: id.into(),
+        text: text.into(),
+        enabled: true,
+        key: if st.hotkeys { st.hotkey(key_id) } else { None },
     };
     if recording {
-        let _ = menu.append(&keyed("finish", "rec_stop", "Finish Recording"));
-        let _ = menu.append(&keyed("pause", "rec_pause", "Pause / Resume"));
-        let _ = menu.append(&item("cancel", "Cancel Recording"));
-        return menu;
+        return vec![
+            keyed("finish", "rec_stop", "Finish Recording"),
+            keyed("pause", "rec_pause", "Pause / Resume"),
+            item("cancel", "Cancel Recording"),
+        ];
     }
-    let _ = menu.append(&keyed("area", "area", "Capture Area"));
-    let _ = menu.append(&keyed("full", "full", "Capture Fullscreen"));
-    let _ = menu.append(&keyed("record", "record", "Record Video"));
-    let _ = menu.append(&PredefinedMenuItem::separator());
-    let _ = menu.append(&item("open", "Open…"));
-    let _ = menu.append(&keyed("clipboard", "clipboard", "Open from Clipboard"));
-    let _ = menu.append(&keyed("latest", "latest", "Open Latest Image"));
-    let _ = menu.append(&PredefinedMenuItem::separator());
-    let recent = Submenu::new("Latest Snaps", true);
     let files = recent_files(&st.save_dir, 10);
-    if files.is_empty() {
-        let _ = recent.append(&MenuItem::new("Nothing saved yet", false, None));
+    let mut recent: Vec<MenuEntry> = files
+        .iter()
+        .map(|p| item(&format!("recent:{}", p.display()), p.file_name().and_then(|n| n.to_str()).unwrap_or("")))
+        .collect();
+    if recent.is_empty() {
+        recent.push(MenuEntry::Item { id: String::new(), text: "Nothing saved yet".into(), enabled: false, key: None });
     }
-    for p in files {
-        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
-        let _ = recent.append(&MenuItem::with_id(format!("recent:{}", p.display()), name, true, None));
-    }
-    let _ = menu.append(&recent);
-    let _ = menu.append(&item("folder", "Saved Snaps Folder"));
-    let _ = menu.append(&PredefinedMenuItem::separator());
-    let _ = menu.append(&item("settings", "Preferences…"));
-    let help = Submenu::new("Help", true);
-    let _ = help.append(&item("help", "Keyboard Shortcuts…"));
-    let _ = help.append(&MenuItem::new("Nothing is ever uploaded", false, None));
-    let _ = menu.append(&help);
-    let _ = menu.append(&MenuItem::with_id("quit", "Quit", true, Some(Accelerator::new(M::META, Code::KeyQ))));
-    menu
+    vec![
+        keyed("area", "area", "Capture Area"),
+        keyed("full", "full", "Capture Fullscreen"),
+        keyed("record", "record", "Record Video"),
+        MenuEntry::Separator,
+        item("open", "Open…"),
+        keyed("clipboard", "clipboard", "Open from Clipboard"),
+        keyed("latest", "latest", "Open Latest Image"),
+        MenuEntry::Separator,
+        MenuEntry::Submenu { text: "Latest Snaps".into(), items: recent },
+        item("folder", "Saved Snaps Folder"),
+        MenuEntry::Separator,
+        item("settings", "Preferences…"),
+        MenuEntry::Submenu {
+            text: "Help".into(),
+            items: vec![
+                item("help", "Keyboard Shortcuts…"),
+                MenuEntry::Item { id: String::new(), text: "Nothing is ever uploaded".into(), enabled: false, key: None },
+            ],
+        },
+        MenuEntry::Item {
+            id: "quit".into(),
+            text: "Quit".into(),
+            enabled: true,
+            key: Some(crate::settings::Hotkey::new(true, false, "KeyQ")),
+        },
+    ]
 }
 
-fn build_tray(st: &Settings) -> Option<tray_icon::TrayIcon> {
-    let (icon, template) = tray_image(false);
-    let mut b = tray_icon::TrayIconBuilder::new()
-        .with_menu(Box::new(build_menu(false, st)))
-        .with_tooltip("LightSnap")
-        .with_icon_as_template(template);
-    if let Some(i) = icon {
-        b = b.with_icon(i);
+/// Linux: the app as eframe sees it while a window is open. The state outlives the
+/// window (see `run_linux` in main.rs).
+#[cfg(target_os = "linux")]
+pub struct Shared(pub std::rc::Rc<std::cell::RefCell<LightSnap>>);
+
+#[cfg(target_os = "linux")]
+impl eframe::App for Shared {
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.0.borrow_mut().logic(ctx, frame);
     }
-    b.build().ok()
+    fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
+        self.0.borrow_mut().ui(ui, frame);
+    }
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        self.0.borrow().clear_color(visuals)
+    }
+    // No on_exit: closing the window only hides LightSnap. Quit saves and exits by itself.
 }

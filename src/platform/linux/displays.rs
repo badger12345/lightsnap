@@ -1,0 +1,78 @@
+//! The connected screens, read from the Wayland compositor. Coordinates are logical
+//! points, like window sizes. Wayland does not tell apps where the mouse is.
+
+use crate::platform::Display;
+use egui::{Pos2, Rect, pos2, vec2};
+use smithay_client_toolkit::output::{OutputHandler, OutputState};
+use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
+use smithay_client_toolkit::{delegate_output, delegate_registry, registry_handlers};
+use wayland_client::globals::registry_queue_init;
+use wayland_client::protocol::wl_output;
+use wayland_client::{Connection, QueueHandle};
+
+struct State {
+    registry: RegistryState,
+    outputs: OutputState,
+}
+
+impl OutputHandler for State {
+    fn output_state(&mut self) -> &mut OutputState {
+        &mut self.outputs
+    }
+    fn new_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+    fn update_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+    fn output_destroyed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+}
+
+impl ProvidesRegistryState for State {
+    fn registry(&mut self) -> &mut RegistryState {
+        &mut self.registry
+    }
+    registry_handlers!(OutputState);
+}
+
+delegate_output!(State);
+delegate_registry!(State);
+
+/// All screens, the one at the top-left corner of the desktop first.
+pub fn displays() -> Vec<Display> {
+    let Ok(conn) = Connection::connect_to_env() else { return Vec::new() };
+    let Ok((globals, mut queue)) = registry_queue_init::<State>(&conn) else { return Vec::new() };
+    let qh = queue.handle();
+    let mut st = State { registry: RegistryState::new(&globals), outputs: OutputState::new(&globals, &qh) };
+    // Two round trips: the outputs, then their details (xdg-output).
+    for _ in 0..2 {
+        if queue.roundtrip(&mut st).is_err() {
+            return Vec::new();
+        }
+    }
+    let mut list: Vec<Display> = st
+        .outputs
+        .outputs()
+        .filter_map(|o| st.outputs.info(&o))
+        .map(|info| {
+            let (x, y) = info.logical_position.unwrap_or(info.location);
+            let mode = info.modes.iter().find(|m| m.current).map(|m| m.dimensions);
+            let (lw, lh) = info.logical_size.or_else(|| {
+                mode.map(|(w, h)| (w / info.scale_factor.max(1), h / info.scale_factor.max(1)))
+            })
+            .unwrap_or((0, 0));
+            let scale = match mode {
+                Some((pw, _)) if lw > 0 => pw as f32 / lw as f32,
+                _ => info.scale_factor.max(1) as f32,
+            };
+            Display {
+                bounds: Rect::from_min_size(pos2(x as f32, y as f32), vec2(lw as f32, lh as f32)),
+                scale,
+            }
+        })
+        .filter(|d| d.bounds.width() > 0.0)
+        .collect();
+    list.sort_by(|a, b| (a.bounds.min.x + a.bounds.min.y).total_cmp(&(b.bounds.min.x + b.bounds.min.y)));
+    list
+}
+
+/// Wayland does not share the mouse position outside LightSnap's own windows.
+pub fn mouse_position() -> Option<Pos2> {
+    None
+}

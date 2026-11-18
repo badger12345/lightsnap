@@ -5,9 +5,11 @@ mod clipboard;
 mod displays;
 mod recording;
 mod system;
+mod tray;
 
 pub use capture::*;
 pub use clipboard::*;
 pub use displays::*;
 pub use recording::*;
 pub use system::*;
+pub use tray::*;

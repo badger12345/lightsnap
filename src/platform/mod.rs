@@ -2,9 +2,9 @@
 //! list of screens, opening files, notifications, launch at login, and the parts of
 //! screen recording that depend on the system.
 //!
-//! The rest of the app only calls the functions re-exported here. Only macOS is
-//! implemented so far. A port to another system adds `platform/<os>/` with the same
-//! public functions and types, and one more `cfg` line below.
+//! The rest of the app only calls the functions re-exported here. Each system has its
+//! own `platform/<os>/` with the same public functions and types: macOS, and Linux
+//! (Wayland only).
 
 use egui::{Pos2, Rect};
 use std::path::PathBuf;
@@ -14,8 +14,17 @@ mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::*;
 
-#[cfg(not(target_os = "macos"))]
-compile_error!("LightSnap only runs on macOS so far. A port adds src/platform/<os>/ (see src/platform/mod.rs).");
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::*;
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+compile_error!("LightSnap runs on macOS and Linux. A port adds src/platform/<os>/ (see src/platform/mod.rs).");
+
+/// The app id. On Linux it names the .desktop file and is how the portals remember
+/// what was allowed.
+pub const APP_ID: &str = "io.github.badger12345.LightSnap";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CaptureKind {
@@ -82,3 +91,59 @@ pub struct Devices {
     pub screens: Vec<(usize, usize)>,
     pub audio_inputs: Vec<String>,
 }
+
+/// One entry of the tray menu. The app builds the menu from these, each system shows it
+/// its own way.
+#[derive(Clone, Debug)]
+pub enum MenuEntry {
+    Item {
+        /// Sent back to the app when the item is chosen. Empty for an item that does nothing.
+        id: String,
+        text: String,
+        enabled: bool,
+        /// Shortcut shown next to the item.
+        key: Option<crate::settings::Hotkey>,
+    },
+    Separator,
+    Submenu { text: String, items: Vec<MenuEntry> },
+}
+
+/// Called with the id of a chosen menu item or a pressed global shortcut. It runs on a
+/// system thread, so it only hands the id on.
+pub type Sink = std::sync::Arc<dyn Fn(String) + Send + Sync>;
+
+/// The tray icon as RGBA pixels, `TRAY_PX` × `TRAY_PX`: a camera, or a red dot while recording.
+/// `light` draws the camera white for dark panels.
+pub fn tray_pixels(recording: bool, light: bool) -> Vec<u8> {
+    use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Transform};
+    let n = TRAY_PX;
+    let Some(mut pm) = Pixmap::new(n, n) else { return vec![0; (n * n * 4) as usize] };
+    let mut paint = Paint::default();
+    paint.anti_alias = true;
+    if recording {
+        paint.set_color_rgba8(230, 40, 40, 255);
+        if let Some(c) = PathBuilder::from_circle(22.0, 22.0, 13.0) {
+            pm.fill_path(&c, &paint, FillRule::Winding, Transform::identity(), None);
+        }
+    } else {
+        let v = if light { 255 } else { 0 };
+        paint.set_color_rgba8(v, v, v, 255);
+        if let Some(r) = tiny_skia::Rect::from_xywh(5.0, 13.0, 34.0, 23.0) {
+            pm.fill_rect(r, &paint, Transform::identity(), None);
+        }
+        if let Some(r) = tiny_skia::Rect::from_xywh(15.0, 8.0, 14.0, 6.0) {
+            pm.fill_rect(r, &paint, Transform::identity(), None);
+        }
+        paint.blend_mode = tiny_skia::BlendMode::Clear;
+        if let Some(c) = PathBuilder::from_circle(22.0, 24.5, 7.5) {
+            pm.fill_path(&c, &paint, FillRule::Winding, Transform::identity(), None);
+        }
+        paint.blend_mode = tiny_skia::BlendMode::SourceOver;
+        if let Some(c) = PathBuilder::from_circle(22.0, 24.5, 4.0) {
+            pm.fill_path(&c, &paint, FillRule::Winding, Transform::identity(), None);
+        }
+    }
+    pm.take()
+}
+
+pub const TRAY_PX: u32 = 44;

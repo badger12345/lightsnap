@@ -92,6 +92,13 @@ pub struct Editor {
 const MAX_UNDO: usize = 40;
 
 impl Editor {
+    /// Drops the picture on the graphics card; the next frame sends it again.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn forget_texture(&mut self) {
+        self.tex = None;
+        self.tex_dirty = true;
+    }
+
     pub fn new(img: image::RgbaImage, name: String, ppp: f32) -> Self {
         Self {
             doc: Doc { base: Arc::new(img), shapes: Vec::new() },

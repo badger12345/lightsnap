@@ -18,6 +18,7 @@ use std::path::PathBuf;
 fn main() -> eframe::Result<()> {
     install_crash_log();
     install_warning_log();
+    platform::prepare();
     let args: Vec<String> = std::env::args().collect();
     let screenshot = args
         .iter()
@@ -51,35 +52,92 @@ fn main() -> eframe::Result<()> {
         }
     }
 
-    let mut viewport = egui::ViewportBuilder::default()
-        .with_title("LightSnap")
-        .with_inner_size([980.0, 620.0])
-        .with_min_inner_size([900.0, 440.0]);
-    if background {
-        viewport = viewport.with_visible(false);
-    }
-    if quiet {
-        // Open without taking focus so a check never gets in the way.
-        viewport = viewport.with_active(false);
-        #[cfg(target_os = "windows")]
-        {
-            viewport = viewport.with_window_level(egui::WindowLevel::AlwaysOnBottom);
+    let make_options = move || {
+        let mut viewport = egui::ViewportBuilder::default()
+            .with_title("LightSnap")
+            .with_app_id(platform::APP_ID)
+            .with_inner_size([980.0, 620.0])
+            .with_min_inner_size([900.0, 440.0]);
+        if background {
+            viewport = viewport.with_visible(false);
         }
-    }
-
-    let mut options = eframe::NativeOptions {
-        viewport,
-        // Only repaint when something happens: near-zero CPU while idle.
-        run_and_return: false,
-        ..Default::default()
+        if quiet {
+            // Open without taking focus so a check never gets in the way.
+            viewport = viewport.with_active(false);
+            #[cfg(target_os = "windows")]
+            {
+                viewport = viewport.with_window_level(egui::WindowLevel::AlwaysOnBottom);
+            }
+        }
+        let mut options = eframe::NativeOptions {
+            viewport,
+            // Only repaint when something happens: near-zero CPU while idle.
+            run_and_return: false,
+            ..Default::default()
+        };
+        options.event_loop_builder = Some(platform::event_loop_hook(quiet));
+        options
     };
-    options.event_loop_builder = Some(platform::event_loop_hook(quiet));
 
+    #[cfg(target_os = "linux")]
+    return run_linux(make_options, screenshot, open, quiet, background);
+
+    #[cfg(not(target_os = "linux"))]
     eframe::run_native(
         "LightSnap",
-        options,
-        Box::new(move |cc| Ok(Box::new(app::LightSnap::new(cc, screenshot, open, quiet, background)))),
+        make_options(),
+        Box::new(move |cc| Ok(Box::new(app::LightSnap::new(&cc.egui_ctx, screenshot, open, quiet, background)))),
     )
+}
+
+/// Wayland can't hide a window, so on Linux "hiding" closes it. eframe then returns
+/// here, LightSnap keeps running (tray, shortcuts, recording) and the window opens again
+/// when it is needed. The same egui context is used every time, so the app's state and
+/// its helper threads stay valid.
+#[cfg(target_os = "linux")]
+fn run_linux(
+    make_options: impl Fn() -> eframe::NativeOptions,
+    screenshot: Option<PathBuf>,
+    open: Option<PathBuf>,
+    quiet: bool,
+    background: bool,
+) -> eframe::Result<()> {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let ctx = egui::Context::default();
+    let state: Rc<RefCell<app::LightSnap>> =
+        Rc::new(RefCell::new(app::LightSnap::new(&ctx, screenshot, open, quiet, background)));
+    let mut first = true;
+    loop {
+        if !(first && background) {
+            let mut options = make_options();
+            options.run_and_return = true;
+            options.viewport = options.viewport.with_visible(true);
+            let st = state.clone();
+            let reattach = !first;
+            eframe::run_native_ext(
+                "LightSnap",
+                options,
+                Some(ctx.clone()),
+                Box::new(move |cc| {
+                    if reattach {
+                        st.borrow_mut().reattach(&cc.egui_ctx);
+                    }
+                    Ok(Box::new(app::Shared(st)))
+                }),
+            )?;
+        }
+        first = false;
+        // No window: keep the app going until it needs one again.
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let mut s = state.borrow_mut();
+            s.tick_hidden(&ctx);
+            if s.wants_window() {
+                break;
+            }
+        }
+    }
 }
 
 /// If LightSnap ever stops because of an error, write what happened to

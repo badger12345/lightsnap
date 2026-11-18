@@ -28,6 +28,27 @@ pub fn notify(title: &str, body: &str) {
     let _ = Command::new("/usr/bin/osascript").args(["-e", &script]).spawn();
 }
 
+// Words for the interface.
+pub const THIS_COMPUTER: &str = "this Mac";
+pub const FILE_MANAGER: &str = "Finder";
+pub const VIDEO_PLAYER: &str = "QuickTime Player";
+pub const SCREEN_PERMISSION_HINT: &str = "Allow screen recording in System Settings › Privacy & Security.";
+pub const FFMPEG_HINT: &str = "brew install ffmpeg";
+/// Image editors offered in the settings: (value stored in the settings, label).
+pub const EDITOR_APPS: &[(&str, &str)] = &[("Preview", "Preview"), ("Photos", "Photos")];
+pub const DEFAULT_EDITOR: &str = "Preview";
+/// Where "Choose…" starts, and the file type it accepts.
+pub const EDITOR_DIR: &str = "/Applications";
+pub const EDITOR_EXT: &str = "app";
+
+/// The name of an image editor as stored in the settings ("Preview" or a path to an .app).
+pub fn editor_label(app: &str) -> String {
+    Path::new(app).file_stem().and_then(|s| s.to_str()).unwrap_or(app).to_string()
+}
+
+/// Runs once at start. Nothing to do on macOS: the app bundle tells the system about LightSnap.
+pub fn prepare() {}
+
 /// Sets up the app's event loop: a menu-bar app without a Dock icon. With `quiet`
 /// (check pictures) the app also starts without taking focus.
 pub fn event_loop_hook(quiet: bool) -> eframe::EventLoopBuilderHook {

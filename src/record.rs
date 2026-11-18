@@ -152,9 +152,7 @@ impl Recorder {
                     .join(" ");
                 self.child = None;
                 let msg = if msg.trim().is_empty() {
-                    format!(
-                        "Recording stopped unexpectedly ({status}). Check that screen recording is allowed in System Settings › Privacy & Security."
-                    )
+                    format!("Recording stopped unexpectedly ({status}). {}", platform::SCREEN_PERMISSION_HINT)
                 } else {
                     format!("Recording stopped: {}", msg.trim())
                 };
@@ -219,10 +217,7 @@ impl Recorder {
         self.stop_segment();
         let segments: Vec<PathBuf> = self.segments.iter().filter(|p| p.exists()).cloned().collect();
         if segments.is_empty() {
-            return Err(
-                "No video was recorded. Check that screen recording is allowed in System Settings › Privacy & Security."
-                    .into(),
-            );
+            return Err(format!("No video was recorded. {}", platform::SCREEN_PERMISSION_HINT));
         }
         let ext = segments[0].extension().and_then(|e| e.to_str()).unwrap_or("mp4").to_string();
         let dest = dest_stem_path.with_extension(&ext);

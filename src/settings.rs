@@ -49,8 +49,11 @@ impl Hotkey {
         Self { cmd, alt, ctrl: false, shift: false, code: code.into() }
     }
 
-    /// Shown like the original: "⌘+⌥+6".
+    /// Shown like the original: "⌘+⌥+6". On Linux: "Ctrl+Alt+6".
     pub fn label(&self) -> String {
+        if cfg!(target_os = "linux") {
+            return self.linux_text();
+        }
         let mut parts: Vec<String> = Vec::new();
         if self.ctrl {
             parts.push("⌃".into());
@@ -68,8 +71,26 @@ impl Hotkey {
         parts.join("+")
     }
 
-    /// Compact form for menus: "⌥⌘6".
+    /// Linux style: "Ctrl+Alt+Shift+6" (`cmd` is Ctrl there).
+    fn linux_text(&self) -> String {
+        let mut s = String::new();
+        if self.cmd || self.ctrl {
+            s.push_str("Ctrl+");
+        }
+        if self.alt {
+            s.push_str("Alt+");
+        }
+        if self.shift {
+            s.push_str("Shift+");
+        }
+        s + &key_symbol(&self.code)
+    }
+
+    /// Compact form for menus: "⌥⌘6". On Linux the same as `label`.
     pub fn short(&self) -> String {
+        if cfg!(target_os = "linux") {
+            return self.linux_text();
+        }
         let mut s = String::new();
         if self.ctrl {
             s.push('⌃');
@@ -134,13 +155,24 @@ pub const HOTKEY_ACTIONS: [(&str, &str); 7] = [
 
 pub const VIDEO_HOTKEY_ACTIONS: [(&str, &str); 2] = [("rec_pause", "Record/Pause"), ("rec_stop", "Stop")];
 
+/// The keys of a shortcut inside the app, for tooltips: "⇧⌘Z", on Linux "Ctrl+Shift+Z".
+pub fn keys_text(shift: bool, key: &str) -> String {
+    if cfg!(target_os = "linux") {
+        format!("Ctrl+{}{key}", if shift { "Shift+" } else { "" })
+    } else {
+        format!("{}⌘{key}", if shift { "⇧" } else { "" })
+    }
+}
+
 pub fn default_hotkey(id: &str) -> Option<Hotkey> {
+    // On Linux Ctrl+digit belongs to other apps (browser tabs), so all defaults add Alt.
+    let linux = cfg!(target_os = "linux");
     match id {
-        "area" => Some(Hotkey::new(true, false, "Digit4")),
+        "area" => Some(Hotkey::new(true, linux, "Digit4")),
         "full" => Some(Hotkey::new(true, true, "Digit6")),
-        "timed" => Some(Hotkey::new(true, false, "Digit2")),
+        "timed" => Some(Hotkey::new(true, linux, "Digit2")),
         "latest" => Some(Hotkey::new(true, true, "Digit0")),
-        "record" => Some(Hotkey::new(true, false, "Digit3")),
+        "record" => Some(Hotkey::new(true, linux, "Digit3")),
         _ => None,
     }
 }
@@ -259,7 +291,7 @@ impl Default for Settings {
             color: [235, 51, 36, 255],
             width: 4.0,
             sound: false,
-            external_editor: "Preview".into(),
+            external_editor: crate::platform::DEFAULT_EDITOR.into(),
             jpeg_quality: 90,
             autosave: false,
             shrink_retina: false,

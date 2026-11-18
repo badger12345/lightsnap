@@ -46,3 +46,14 @@ pub fn capture_all_screens(count: usize) -> Vec<PathBuf> {
     }
     files.into_iter().filter(|f| f.exists()).collect()
 }
+
+/// Whether captures that don't ask first (full screen, timed) may run. macOS asks by
+/// itself when needed, so LightSnap does not have to.
+pub fn screenshot_allowed() -> bool {
+    true
+}
+
+/// Asks for that permission. Nothing to do on macOS.
+pub fn ask_screenshot_permission() -> bool {
+    true
+}
