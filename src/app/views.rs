@@ -416,7 +416,7 @@ impl LightSnap {
             }
 
             let sz = vec2(TOOL_W, TOOL_H - 2.0);
-            let mut tool_btn = |ui: &mut Ui, icon: Icon, tool: Tool, this: &mut Self| {
+            let tool_btn = |ui: &mut Ui, icon: Icon, tool: Tool, this: &mut Self| {
                 if icon_button(ui, icon, this.tool == tool && enabled, enabled, sz, tool.tip()).clicked() {
                     this.tool = tool;
                     if let Some(e) = &mut this.ed {

@@ -75,6 +75,8 @@ pub struct Prefs {
     pub can_configure_keys: bool,
     /// Frames to wait before the window is made (Linux, see `show`).
     wait: u32,
+    /// Check pictures: the height the frame inside the main window loses to its title bar.
+    embed_extra: f32,
     /// Frames left to check that the window got the height it was sent.
     size_checks: u32,
     /// The app icon on the About tab, loaded when first shown.
@@ -108,6 +110,7 @@ impl Default for Prefs {
             content_h: 0.0,
             can_configure_keys: false,
             wait: 0,
+            embed_extra: 0.0,
             size_checks: 0,
             about_icon: None,
         }
@@ -139,13 +142,21 @@ impl Prefs {
             return out;
         }
         let size = self.tab.size();
-        let builder = ViewportBuilder::default()
+        let mut builder = ViewportBuilder::default()
             .with_app_id(crate::platform::APP_ID)
             .with_title(format!("LightSnap | {}", self.tab.name()))
             .with_inner_size(vec2(size.x, 420.0))
             .with_resizable(false)
             .with_minimize_button(false)
             .with_maximize_button(false);
+        if ctx.embed_viewports() {
+            // Check pictures draw the settings inside the main window. Give them the
+            // size the real window gets.
+            // The frame's own title bar takes `embed_extra` of that height.
+            let h = if self.content_h > 0.0 { self.content_h } else { 420.0 };
+            let fixed = vec2(size.x, h + self.embed_extra);
+            builder = builder.with_min_inner_size(fixed).with_max_inner_size(fixed);
+        }
         let mut close = false;
         crate::show_immediate(ctx, ViewportId::from_hash_of("lightsnap_prefs"), builder, |ui, _| {
             let ctx = ui.ctx().clone();
@@ -165,6 +176,14 @@ impl Prefs {
                 close = true;
             }
             let full = ui.max_rect();
+            if ctx.embed_viewports() {
+                let h = if self.content_h > 0.0 { self.content_h } else { 420.0 };
+                let extra = h + self.embed_extra - full.height();
+                if (extra - self.embed_extra).abs() > 0.5 {
+                    self.embed_extra = extra;
+                    ctx.request_repaint();
+                }
+            }
             ui.painter().rect_filled(full, 0.0, BG);
 
             // Tab bar
@@ -233,8 +252,13 @@ impl Prefs {
             let want = HEADER_H + 12.0 + used.inner + 16.0;
             if (want - self.content_h).abs() > 1.0 {
                 self.content_h = want;
-                self.size_checks = 20;
-                ctx.send_viewport_cmd(ViewportCommand::InnerSize(vec2(size.x, want)));
+                if ctx.embed_viewports() {
+                    // Check pictures: the command would resize the main window.
+                    ctx.request_repaint();
+                } else {
+                    self.size_checks = 20;
+                    ctx.send_viewport_cmd(ViewportCommand::InnerSize(vec2(size.x, want)));
+                }
             }
             // A new window may not exist yet when the size is sent (Wayland), and then the
             // request is lost. So send it again until the window has the height. Wayland
@@ -269,18 +293,9 @@ impl Prefs {
 
     fn general(&mut self, ui: &mut Ui, s: &mut Settings, out: &mut PrefsOut) {
         row(ui, "After screenshot:", |ui| {
-            let label = match s.after_capture {
-                AfterCapture::OpenEditor => "Open LightSnap editor",
-                AfterCapture::SaveAndCopy => "Save to folder and copy",
-                AfterCapture::CopyOnly => "Copy to clipboard only",
-            };
-            egui::ComboBox::from_id_salt("after").width(CTRL_W).selected_text(label).show_ui(ui, |ui| {
-                for (a, l) in [
-                    (AfterCapture::OpenEditor, "Open LightSnap editor"),
-                    (AfterCapture::SaveAndCopy, "Save to folder and copy"),
-                    (AfterCapture::CopyOnly, "Copy to clipboard only"),
-                ] {
-                    out.changed |= ui.selectable_value(&mut s.after_capture, a, l).changed();
+            egui::ComboBox::from_id_salt("after").width(CTRL_W).selected_text(s.after_capture.label()).show_ui(ui, |ui| {
+                for a in [AfterCapture::OpenEditor, AfterCapture::SaveAndCopy, AfterCapture::CopyOnly] {
+                    out.changed |= ui.selectable_value(&mut s.after_capture, a, a.label()).changed();
                 }
             });
         });

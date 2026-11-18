@@ -203,7 +203,7 @@ pub enum AfterCapture {
 impl AfterCapture {
     pub fn label(self) -> &'static str {
         match self {
-            AfterCapture::OpenEditor => "Open in editor",
+            AfterCapture::OpenEditor => "Open LightSnap editor",
             AfterCapture::SaveAndCopy => "Save to folder and copy",
             AfterCapture::CopyOnly => "Copy to clipboard only",
         }
