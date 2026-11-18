@@ -34,7 +34,7 @@ CARGO_ENCODED_RUSTFLAGS=$(printf '%s\x1f' \
 export CARGO_ENCODED_RUSTFLAGS="${CARGO_ENCODED_RUSTFLAGS%$'\x1f'}"
 
 echo "==> Building LightSnap $VERSION ($TARGET)"
-MACOSX_DEPLOYMENT_TARGET=13.0 cargo build --release --target "$TARGET"
+MACOSX_DEPLOYMENT_TARGET=27.0 cargo build --release --target "$TARGET"
 
 echo "==> Drawing the app icon"
 WORK=$(mktemp -d)

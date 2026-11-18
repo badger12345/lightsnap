@@ -109,7 +109,7 @@ pub fn set_login_item(on: bool) {
     set_launch_agent(on);
 }
 
-const AGENT_LABEL: &str = "app.lightsnap.login";
+const AGENT_LABEL: &str = "io.github.badger12345.lightsnap.login";
 
 fn agent_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join("Library/LaunchAgents").join(format!("{AGENT_LABEL}.plist")))

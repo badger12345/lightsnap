@@ -3,7 +3,28 @@
 A light screenshot and screen-recording app for the macOS menu bar. Nothing is uploaded:
 captures are saved locally and copied to the clipboard.
 
-Runs on Apple Silicon Macs. Tested on macOS 27.
+Needs a Mac with Apple Silicon and macOS 27 or later.
+
+## Install
+
+The app is not notarized by Apple (that needs a paid developer account), so macOS blocks it
+the first time:
+
+1. Download `LightSnap-<version>.zip` from
+   [Releases](https://github.com/badger12345/lightsnap/releases), unzip it and move
+   `LightSnap.app` to **Applications**.
+2. Open it. macOS says it cannot check the app. Click **Done** (not "Move to Trash").
+3. Go to **System Settings › Privacy & Security**, scroll down to the message about LightSnap
+   and click **Open Anyway**. Confirm with your password or Touch ID.
+4. Allow **Screen & System Audio Recording** when LightSnap asks, then quit and reopen it.
+
+Instead of steps 2 and 3, you can remove the download mark in Terminal:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/LightSnap.app
+```
+
+To check that your copy was built by badger12345, see [Signing](#signing).
 
 ## Build
 
@@ -56,22 +77,16 @@ Releases by badger12345 are signed with this certificate:
 To check a copy, run `codesign -d -r- LightSnap.app`. It shows the SHA-1 as
 `certificate leaf = H"…"`.
 
-## First start on another Mac
+## Disclaimer
 
-The app is not notarized by Apple (that needs a paid developer account), so macOS blocks it
-the first time:
+LightSnap is a free, non-commercial hobby project under the MIT License.
+It is provided "as is", without warranty of any kind. Use it at your own risk.
+To the extent permitted by law, the author is not liable for any damage or loss,
+including lost data, arising from the use of or inability to use this software.
+There is no support and no promise of updates or fixes.
 
-1. Unzip `LightSnap-<version>.zip` and move `LightSnap.app` to **Applications**.
-2. Open it. macOS says it cannot check the app. Click **Done** (not "Move to Trash").
-3. Go to **System Settings › Privacy & Security**, scroll down to the message about LightSnap
-   and click **Open Anyway**. Confirm with your password or Touch ID.
-4. Allow **Screen & System Audio Recording** when LightSnap asks, then quit and reopen it.
-
-Instead of steps 2 and 3, you can remove the download mark in Terminal:
-
-```bash
-xattr -dr com.apple.quarantine /Applications/LightSnap.app
-```
+You are responsible for how you use it. Recording other people's screens,
+calls or voices may require their consent where you live.
 
 ## License
 

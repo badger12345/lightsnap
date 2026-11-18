@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>app.lightsnap</string>
+    <string>io.github.badger12345.lightsnap</string>
     <key>CFBundleName</key>
     <string>LightSnap</string>
     <key>CFBundleDisplayName</key>
@@ -21,7 +21,7 @@
     <key>CFBundleVersion</key>
     <string>@VERSION@</string>
     <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
+    <string>27.0</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.productivity</string>
     <!-- Menu-bar app: no Dock icon. -->
