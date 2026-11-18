@@ -270,6 +270,10 @@ pub struct Settings {
     pub keys: BTreeMap<String, Option<Hotkey>>,
     /// The window was shown once (first start); later starts stay quietly in the menu bar.
     pub welcomed: bool,
+    /// The shortcuts as the desktop has them, by action id (Linux: the desktop owns
+    /// global shortcuts and the person may have changed them there). Not saved.
+    #[serde(skip)]
+    pub live_keys: Option<std::collections::HashMap<String, String>>,
 }
 
 impl Default for Settings {
@@ -306,6 +310,7 @@ impl Default for Settings {
             apply_template_reopened: false,
             keys: BTreeMap::new(),
             welcomed: false,
+            live_keys: None,
         }
     }
 }
@@ -391,6 +396,9 @@ impl Settings {
     pub fn hotkey_short(&self, id: &str) -> String {
         if !self.hotkeys {
             return String::new();
+        }
+        if let Some(live) = &self.live_keys {
+            return live.get(id).cloned().unwrap_or_default();
         }
         self.hotkey(id).map(|k| k.short()).unwrap_or_default()
     }

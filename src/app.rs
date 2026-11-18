@@ -1021,6 +1021,12 @@ impl LightSnap {
             }
             let action = match ev {
                 AppEvent::Menu(id) => action_from_id(&id, self.settings.delay_secs),
+                // The desktop's shortcuts changed (Linux): show the keys it has now.
+                AppEvent::Hotkey(id) if id == "keys-changed" => {
+                    self.settings.live_keys = self.hotkeys.as_ref().and_then(|h| h.live_labels());
+                    self.tray_menu_dirty = true;
+                    None
+                }
                 AppEvent::Hotkey(id) => action_from_id(&id, self.settings.delay_secs),
                 AppEvent::Dialog(..) | AppEvent::Permission(_) => None,
             };
@@ -1871,6 +1877,7 @@ impl LightSnap {
 
         for (si, scr) in screens.iter_mut().enumerate() {
             let builder = ViewportBuilder::default()
+                .with_app_id(crate::platform::APP_ID)
                 .with_title("Select area to record")
                 .with_decorations(false)
                 .with_position(scr.bounds.min)
@@ -2141,6 +2148,7 @@ impl LightSnap {
             let color = if paused { Color32::from_rgb(255, 170, 0) } else { RED };
             for (bi, b) in bars.iter().enumerate() {
                 let builder = ViewportBuilder::default()
+                    .with_app_id(crate::platform::APP_ID)
                     .with_title("Recording area")
                     .with_decorations(false)
                     .with_mouse_passthrough(true)
@@ -2170,6 +2178,7 @@ impl LightSnap {
         }
         pos.x = pos.x.clamp(screen.min.x + 4.0, (screen.max.x - bar_size.x - 4.0).max(screen.min.x + 4.0));
         let builder = ViewportBuilder::default()
+            .with_app_id(crate::platform::APP_ID)
             .with_title("Recording")
             .with_decorations(false)
             .with_window_level(WindowLevel::AlwaysOnTop)
@@ -2379,7 +2388,13 @@ impl eframe::App for LightSnap {
         }
 
         // Settings, in a window of their own.
+        self.prefs.can_configure_keys = self.hotkeys.as_ref().is_some_and(|h| h.can_configure());
         let out = self.prefs.show(&ctx, &mut self.settings);
+        if out.configure_keys {
+            if let Some(h) = &self.hotkeys {
+                h.configure();
+            }
+        }
         if out.capture_started {
             // Let the next key press reach the settings window instead of starting a capture.
             self.unregister_hotkeys();

@@ -6,6 +6,7 @@ use crate::settings::Hotkey;
 use ksni::blocking::{Handle, TrayMethods};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Sender, channel};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 struct Sni {
@@ -118,20 +119,47 @@ impl Tray {
 /// Global shortcuts through the portal. Binding runs on a helper thread because the
 /// desktop may show a dialog first.
 pub struct Hotkeys {
-    tx: Sender<Vec<(String, Hotkey)>>,
+    tx: Sender<Cmd>,
     muted: Arc<AtomicBool>,
     last: Vec<(String, Hotkey)>,
+    live: Arc<Mutex<Option<HashMap<String, String>>>>,
+    version: Arc<std::sync::atomic::AtomicU32>,
 }
+
+enum Cmd {
+    Bind(Vec<(String, Hotkey)>),
+    Configure,
+}
+
+/// Sent to the app's sink when the desktop's shortcuts changed (see `live_labels`).
+pub const KEYS_CHANGED: &str = "keys-changed";
 
 impl Hotkeys {
     pub fn new(sink: Sink) -> Option<Self> {
         super::portal::register();
-        let (tx, rx) = channel::<Vec<(String, Hotkey)>>();
+        let (tx, rx) = channel::<Cmd>();
         let muted = Arc::new(AtomicBool::new(false));
-        let active: Arc<Mutex<Vec<String>>> = Default::default();
-        let (m, a) = (muted.clone(), active.clone());
-        std::thread::spawn(move || pollster::block_on(run(rx, sink, m, a)));
-        Some(Self { tx, muted, last: Vec::new() })
+        let live: Arc<Mutex<Option<HashMap<String, String>>>> = Default::default();
+        let version = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let shared = Shared { sink, muted: muted.clone(), live: live.clone(), version: version.clone() };
+        std::thread::spawn(move || pollster::block_on(run(rx, shared)));
+        Some(Self { tx, muted, last: Vec::new(), live, version })
+    }
+
+    /// The shortcuts as the desktop has them (it may have kept or changed the keys
+    /// LightSnap asked for), by action id. None until they are bound.
+    pub fn live_labels(&self) -> Option<HashMap<String, String>> {
+        self.live.lock().ok()?.clone()
+    }
+
+    /// Whether the desktop can open its own page for changing the shortcuts.
+    pub fn can_configure(&self) -> bool {
+        self.version.load(Ordering::SeqCst) >= 2
+    }
+
+    /// Opens the desktop's page for changing LightSnap's shortcuts.
+    pub fn configure(&self) {
+        let _ = self.tx.send(Cmd::Configure);
     }
 
     /// Replaces all shortcuts. Each pair is (action id, key). An empty list only mutes
@@ -145,17 +173,57 @@ impl Hotkeys {
         self.muted.store(false, Ordering::SeqCst);
         if keys != self.last.as_slice() {
             self.last = keys.to_vec();
-            let _ = self.tx.send(keys.to_vec());
+            let _ = self.tx.send(Cmd::Bind(keys.to_vec()));
         }
     }
 }
 
-async fn run(
-    rx: std::sync::mpsc::Receiver<Vec<(String, Hotkey)>>,
+struct Shared {
     sink: Sink,
     muted: Arc<AtomicBool>,
-    active: Arc<Mutex<Vec<String>>>,
-) {
+    live: Arc<Mutex<Option<HashMap<String, String>>>>,
+    version: Arc<std::sync::atomic::AtomicU32>,
+}
+
+impl Shared {
+    fn set_live(&self, shortcuts: &[ashpd::desktop::global_shortcuts::Shortcut]) {
+        let map: HashMap<String, String> = shortcuts
+            .iter()
+            .map(|s| (s.id().to_string(), tidy_trigger(s.trigger_description())))
+            .collect();
+        log::info!(target: "lightsnap", "global shortcuts: {map:?}");
+        if let Ok(mut l) = self.live.lock() {
+            *l = Some(map);
+        }
+        (self.sink)(KEYS_CHANGED.into());
+    }
+}
+
+/// GNOME describes keys like "Press <Control><Alt>4"; show "Ctrl+Alt+4" like the rest of the app.
+fn tidy_trigger(s: &str) -> String {
+    let s = s.trim().strip_prefix("Press ").unwrap_or(s.trim());
+    if !s.contains('<') {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(start) = rest.find('<') {
+        let Some(end) = rest[start..].find('>') else { break };
+        let m = &rest[start + 1..start + end];
+        out.push_str(match m {
+            "Control" | "Primary" | "Ctrl" => "Ctrl+",
+            "Alt" => "Alt+",
+            "Shift" => "Shift+",
+            "Super" | "Meta" => "Super+",
+            other => other,
+        });
+        rest = &rest[start + end + 1..];
+    }
+    let key = rest.trim();
+    out + &if key.chars().count() == 1 { key.to_uppercase() } else { key.to_string() }
+}
+
+async fn run(rx: std::sync::mpsc::Receiver<Cmd>, shared: Shared) {
     use ashpd::desktop::global_shortcuts::{GlobalShortcuts, NewShortcut};
     use futures_util::StreamExt;
     let portal = match GlobalShortcuts::new().await {
@@ -165,31 +233,53 @@ async fn run(
             return;
         }
     };
-    // Key presses arrive on their own thread.
+    shared.version.store(portal.version(), Ordering::SeqCst);
+    let shared = Arc::new(shared);
+    // Key presses and changes made in the desktop's settings arrive on their own threads.
     {
-        let (sink, muted, active) = (sink.clone(), muted.clone(), active.clone());
+        let sh = shared.clone();
         std::thread::spawn(move || {
             pollster::block_on(async move {
                 let Ok(p) = GlobalShortcuts::new().await else { return };
                 let Ok(mut stream) = p.receive_activated().await else { return };
                 while let Some(ev) = stream.next().await {
                     let id = ev.shortcut_id().to_string();
-                    let known = active.lock().map(|a| a.contains(&id)).unwrap_or(false);
-                    if known && !muted.load(Ordering::SeqCst) {
-                        sink(id);
+                    let known = sh.live.lock().map(|l| l.as_ref().is_some_and(|m| m.contains_key(&id))).unwrap_or(false);
+                    if known && !sh.muted.load(Ordering::SeqCst) {
+                        (sh.sink)(id);
                     }
                 }
             })
         });
+        let sh = shared.clone();
+        std::thread::spawn(move || {
+            pollster::block_on(async move {
+                let Ok(p) = GlobalShortcuts::new().await else { return };
+                let Ok(mut stream) = p.receive_shortcuts_changed().await else { return };
+                while let Some(ev) = stream.next().await {
+                    sh.set_live(ev.shortcuts());
+                }
+            })
+        });
     }
-    let mut session = None;
-    while let Ok(mut keys) = rx.recv() {
+    let mut session: Option<ashpd::desktop::Session<GlobalShortcuts>> = None;
+    while let Ok(cmd) = rx.recv() {
+        let mut keys = match cmd {
+            Cmd::Configure => {
+                if let Some(s) = &session {
+                    if let Err(e) = portal.configure_shortcuts(s, None, Default::default()).await {
+                        log::warn!(target: "lightsnap", "configure shortcuts: {e}");
+                    }
+                }
+                continue;
+            }
+            Cmd::Bind(k) => k,
+        };
         // Only the newest list counts.
-        while let Ok(k) = rx.try_recv() {
+        while let Ok(Cmd::Bind(k)) = rx.try_recv() {
             keys = k;
         }
         if let Some(s) = session.take() {
-            let _: ashpd::desktop::Session<GlobalShortcuts> = s;
             let _ = s.close().await;
         }
         let Ok(s) = portal.create_session(Default::default()).await else { continue };
@@ -198,13 +288,7 @@ async fn run(
             .map(|(id, k)| NewShortcut::new(id.as_str(), description(id)).preferred_trigger(Some(trigger(k).as_str())))
             .collect();
         match portal.bind_shortcuts(&s, &shortcuts, None, Default::default()).await.and_then(|r| r.response()) {
-            Ok(r) => {
-                let ids: Vec<String> = r.shortcuts().iter().map(|s| s.id().to_string()).collect();
-                log::info!(target: "lightsnap", "global shortcuts bound: {ids:?}");
-                if let Ok(mut a) = active.lock() {
-                    *a = ids;
-                }
-            }
+            Ok(r) => shared.set_live(r.shortcuts()),
             Err(e) => log::warn!(target: "lightsnap", "global shortcuts: {e}"),
         }
         session = Some(s);
@@ -268,4 +352,15 @@ fn keysym(code: &str) -> String {
         other => other, // F1..F24 and the rest keep their name
     }
     .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn tidies_gnome_triggers() {
+        assert_eq!(super::tidy_trigger("Press <Control><Alt>4"), "Ctrl+Alt+4");
+        assert_eq!(super::tidy_trigger("<Shift><Super>s"), "Shift+Super+S");
+        assert_eq!(super::tidy_trigger("Ctrl+Alt+6"), "Ctrl+Alt+6");
+        assert_eq!(super::tidy_trigger(""), "");
+    }
 }

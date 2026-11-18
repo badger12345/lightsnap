@@ -104,7 +104,11 @@ fn run_linux(
 ) -> eframe::Result<()> {
     use std::cell::RefCell;
     use std::rc::Rc;
+    // Set up like eframe sets up its own context: real windows for extra viewports,
+    // and up to two passes per frame.
     let ctx = egui::Context::default();
+    ctx.set_embed_viewports(false);
+    ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::new(2).unwrap_or(std::num::NonZeroUsize::MIN));
     let state: Rc<RefCell<app::LightSnap>> =
         Rc::new(RefCell::new(app::LightSnap::new(&ctx, screenshot, open, quiet, background)));
     let mut first = true;

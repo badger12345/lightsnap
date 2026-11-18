@@ -68,6 +68,10 @@ pub struct Prefs {
     focused: bool,
     /// Height of the current tab's contents, to fit the window to it.
     content_h: f32,
+    /// The desktop can open its own page for changing the shortcuts (Linux).
+    pub can_configure_keys: bool,
+    /// Frames to wait before the window is made (Linux, see `show`).
+    wait: u32,
 }
 
 #[derive(Default)]
@@ -82,16 +86,33 @@ pub struct PrefsOut {
     pub pick_save_dir: bool,
     /// Ask the app to show an app picker for the external editor.
     pub pick_editor_app: bool,
+    /// Ask the desktop to show its page for changing the shortcuts (Linux).
+    pub configure_keys: bool,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { open: false, tab: Tab::General, capturing: None, about: false, sized_for: None, focused: false, content_h: 0.0 }
+        Self {
+            open: false,
+            tab: Tab::General,
+            capturing: None,
+            about: false,
+            sized_for: None,
+            focused: false,
+            content_h: 0.0,
+            can_configure_keys: false,
+            wait: 0,
+        }
     }
 }
 
 impl Prefs {
     pub fn open(&mut self) {
+        // Wayland ignores "bring to front" for a window that is already open, so on
+        // Linux it is made again (see `show`).
+        if cfg!(target_os = "linux") {
+            self.wait = if self.open { 1 } else { 30 };
+        }
         self.open = true;
         self.focused = false;
     }
@@ -101,8 +122,17 @@ impl Prefs {
         if !self.open {
             return out;
         }
+        // Linux: GNOME puts a new window in front only while LightSnap has the focus. So
+        // the window waits until the main window has it (or a moment has passed).
+        if self.wait > 0 {
+            let main_focused = ctx.input(|i| i.viewport().focused) == Some(true);
+            self.wait = if main_focused { self.wait.min(1) - 1 } else { self.wait - 1 };
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+            return out;
+        }
         let size = self.tab.size();
         let builder = ViewportBuilder::default()
+            .with_app_id(crate::platform::APP_ID)
             .with_title(format!("LightSnap | {}", self.tab.name()))
             .with_inner_size(vec2(size.x, 420.0))
             .with_resizable(false)
@@ -386,6 +416,29 @@ impl Prefs {
     // ------------------------------------------------------------ Hotkeys
 
     fn hotkeys(&mut self, ui: &mut Ui, s: &mut Settings, out: &mut PrefsOut) {
+        // Linux: the desktop owns global shortcuts. Show what it has; changes happen there.
+        if let Some(live) = s.live_keys.clone() {
+            for (id, label) in HOTKEY_ACTIONS.iter().chain(VIDEO_HOTKEY_ACTIONS.iter()) {
+                let label = if *id == "timed" { format!("Fullscreen after {}s:", s.delay_secs) } else { format!("{label}:") };
+                row_w(ui, &label, KEY_LABEL_W, 10.0, |ui| {
+                    let text = live.get(*id).filter(|t| !t.is_empty()).cloned().unwrap_or_else(|| "Not set".into());
+                    let (r, _) = ui.allocate_exact_size(vec2(CTRL_W - 40.0, 27.0), Sense::hover());
+                    ui.painter().rect_filled(r, 3.0, KEY_BTN);
+                    ui.painter().text(r.center(), Align2::CENTER_CENTER, text, FontId::proportional(FONT), TEXT);
+                });
+            }
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(
+                    "Your desktop manages global shortcuts. On GNOME, change them in Settings › Apps › LightSnap.",
+                )
+                .color(DIM),
+            );
+            if self.can_configure_keys && ui.button("Change Shortcuts…").clicked() {
+                out.configure_keys = true;
+            }
+            return;
+        }
         // Record a new shortcut from the next key press.
         if let Some(id) = self.capturing.clone() {
             let pressed = ui.input(|i| {

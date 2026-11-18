@@ -116,6 +116,18 @@ impl Hotkeys {
         Some(Self { mgr, registered, keys: Vec::new() })
     }
 
+    /// The shortcuts as the system has them. macOS uses LightSnap's own settings.
+    pub fn live_labels(&self) -> Option<std::collections::HashMap<String, String>> {
+        None
+    }
+
+    /// Whether the system can open its own page for changing the shortcuts.
+    pub fn can_configure(&self) -> bool {
+        false
+    }
+
+    pub fn configure(&self) {}
+
     /// Replaces all shortcuts. Each pair is (action id, key).
     pub fn set(&mut self, keys: &[(String, Hotkey)]) {
         let _ = self.mgr.unregister_all(&self.keys);
