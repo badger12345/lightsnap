@@ -5,6 +5,7 @@ use super::*;
 pub(super) fn action_from_id(id: &str, delay: u32) -> Option<Action> {
     Some(match id {
         "area" => Action::Capture(CaptureKind::Area),
+        "previous" => Action::Capture(CaptureKind::Previous),
         "window" => Action::Capture(CaptureKind::Window),
         "full" => Action::Capture(CaptureKind::FullScreen),
         "timed" => Action::Capture(CaptureKind::Timed(delay)),
@@ -53,6 +54,8 @@ pub(super) fn build_menu(recording: bool, st: &Settings) -> Vec<platform::MenuEn
     }
     vec![
         keyed("area", "area", "Capture Area"),
+        #[cfg(target_os = "macos")]
+        keyed("previous", "previous", "Capture Previous Area"),
         keyed("full", "full", "Capture Fullscreen"),
         keyed("record", "record", "Record Video"),
         MenuEntry::Separator,
@@ -320,6 +323,7 @@ impl LightSnap {
                             // Start with a frame of 75% of the screen under the mouse, centred.
                             let mouse = platform::mouse_position().unwrap_or(screens[0].bounds.center());
                             let si = screens.iter().position(|s| s.bounds.contains(mouse)).unwrap_or(0);
+                            log::info!("record area: mouse at {mouse:?}, frame on screen {si}");
                             let b = screens[si].bounds;
                             let rect = Rect::from_center_size(b.center(), b.size() * 0.75);
                             self.select = Some(Select {
@@ -341,7 +345,7 @@ impl LightSnap {
                         self.toast(format!("Could not read the screen. {}", platform::SCREEN_PERMISSION_HINT), None);
                     }
                     (None, false) => {
-                        let asks = matches!(kind, CaptureKind::Area | CaptureKind::Window);
+                        let asks = matches!(kind, CaptureKind::Area | CaptureKind::Previous | CaptureKind::Window);
                         if !asks && !platform::screenshot_allowed() {
                             self.perm_prompt = true;
                             self.show_window(ctx);

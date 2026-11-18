@@ -13,8 +13,10 @@ pub enum Icon {
     Line,
     Ellipse,
     Pen,
+    Highlight,
     Text,
     Callout,
+    Step,
     Blur,
     Crop,
     Resize,
@@ -116,6 +118,26 @@ pub fn draw(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 color,
                 Stroke::NONE,
             ));
+        }
+        Icon::Highlight => {
+            // A chisel-tip marker above the band it leaves.
+            p.add(Shape::convex_polygon(
+                vec![at(12.5, 2.5), at(16.5, 6.5), at(10.0, 13.0), at(6.0, 9.0)],
+                color,
+                Stroke::NONE,
+            ));
+            p.add(Shape::convex_polygon(
+                vec![at(6.0, 9.0), at(10.0, 13.0), at(7.5, 14.5), at(4.5, 11.5)],
+                color,
+                Stroke::NONE,
+            ));
+            let band = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 110);
+            p.rect_filled(Rect::from_min_max(at(2.0, 15.5), at(18.0, 18.5)), 0.0, band);
+        }
+        Icon::Step => {
+            p.circle_filled(c, 7.5 * u, color);
+            let font = egui::FontId::proportional(11.0 * u);
+            p.text(at(10.0, 10.3), egui::Align2::CENTER_CENTER, "1", font, Color32::from_gray(40));
         }
         Icon::Text | Icon::Callout => {
             let font = egui::FontId::proportional(11.0 * u);

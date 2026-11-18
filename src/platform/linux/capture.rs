@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 /// or None if the person cancelled or capture failed.
 pub fn run_capture(kind: CaptureKind, _sound: bool) -> Option<PathBuf> {
     let interactive = match kind {
-        CaptureKind::Area | CaptureKind::Window => true,
+        // The portal does not say which area was chosen, so there is none to repeat.
+        CaptureKind::Area | CaptureKind::Previous | CaptureKind::Window => true,
         CaptureKind::FullScreen => false,
         CaptureKind::Timed(s) => {
             std::thread::sleep(std::time::Duration::from_secs(s as u64));

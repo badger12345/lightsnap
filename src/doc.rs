@@ -5,7 +5,7 @@ use ab_glyph::{Font, FontVec, PxScale, ScaleFont};
 use egui::{Color32, Pos2, Rect, Vec2, pos2, vec2};
 use image::RgbaImage;
 use std::sync::Arc;
-use tiny_skia::{FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke, Transform};
+use tiny_skia::{BlendMode, FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Style {
@@ -32,6 +32,10 @@ pub enum Shape {
     /// An arrow from `pos` to `tip` (the object it points at), with text at `pos`, the arrow's tail.
     Callout { tip: Pos2, pos: Pos2, text: String, style: Style },
     Blur { a: Pos2, b: Pos2 },
+    /// A numbered circle for steps (1, 2, 3 …). `pos` is its centre.
+    Step { pos: Pos2, n: u32, style: Style },
+    /// A see-through stroke that marks text, like a highlighter pen on paper.
+    Highlight { pts: Vec<Pos2>, style: Style },
 }
 
 pub fn rect_of(a: Pos2, b: Pos2) -> Rect {
@@ -57,7 +61,9 @@ impl Shape {
             | Shape::Ellipse { style, .. }
             | Shape::Pen { style, .. }
             | Shape::Text { style, .. }
-            | Shape::Callout { style, .. } => Some(*style),
+            | Shape::Callout { style, .. }
+            | Shape::Step { style, .. }
+            | Shape::Highlight { style, .. } => Some(*style),
             Shape::Blur { .. } => None,
         }
     }
@@ -70,7 +76,9 @@ impl Shape {
             | Shape::Ellipse { style, .. }
             | Shape::Pen { style, .. }
             | Shape::Text { style, .. }
-            | Shape::Callout { style, .. } => *style = s,
+            | Shape::Callout { style, .. }
+            | Shape::Step { style, .. }
+            | Shape::Highlight { style, .. } => *style = s,
             Shape::Blur { .. } => {}
         }
     }
@@ -85,8 +93,8 @@ impl Shape {
                 *a += d;
                 *b += d;
             }
-            Shape::Pen { pts, .. } => pts.iter_mut().for_each(|p| *p += d),
-            Shape::Text { pos, .. } => *pos += d,
+            Shape::Pen { pts, .. } | Shape::Highlight { pts, .. } => pts.iter_mut().for_each(|p| *p += d),
+            Shape::Text { pos, .. } | Shape::Step { pos, .. } => *pos += d,
             Shape::Callout { tip, pos, .. } => {
                 *tip += d;
                 *pos += d;
@@ -124,6 +132,14 @@ impl Shape {
                 callout_text_rect(font, *pos, *tip, text, style).expand(tol).contains(p)
                     || seg_dist(p, *pos, *tip) <= tol + style.width
             }
+            Shape::Highlight { pts, style } => {
+                let r = tol + highlight_width(style) / 2.0;
+                if pts.len() == 1 {
+                    return p.distance(pts[0]) <= r;
+                }
+                pts.windows(2).any(|w| seg_dist(p, w[0], w[1]) <= r)
+            }
+            Shape::Step { pos, style, .. } => p.distance(*pos) <= step_radius(style) + tol,
             Shape::Text { .. } | Shape::Blur { .. } => self.bounds(font).expand(tol).contains(p),
         }
     }
@@ -142,6 +158,14 @@ impl Shape {
                 }
                 r.expand(style.width)
             }
+            Shape::Highlight { pts, style } => {
+                let mut r = Rect::NOTHING;
+                for p in pts {
+                    r.extend_with(*p);
+                }
+                r.expand(highlight_width(style) / 2.0)
+            }
+            Shape::Step { pos, style, .. } => Rect::from_center_size(*pos, Vec2::splat(step_radius(style) * 2.0)),
             Shape::Text { pos, text, style } => {
                 let size = measure_text(font, style.font_px(), text);
                 Rect::from_min_size(*pos, size)
@@ -152,6 +176,66 @@ impl Shape {
         }
     }
 }
+
+/// The radius of a numbered marker: it grows with the thickness slider, like text does.
+pub fn step_radius(style: &Style) -> f32 {
+    style.font_px() * 0.75
+}
+
+/// The size of the number inside a marker.
+pub fn step_font_px(style: &Style) -> f32 {
+    step_radius(style) * 1.15
+}
+
+/// White numbers on dark colours, black ones on light colours (yellow, white).
+pub fn step_text_color(c: Color32) -> Color32 {
+    let lum = 0.2126 * c.r() as f32 + 0.7152 * c.g() as f32 + 0.0722 * c.b() as f32;
+    if lum > 160.0 { Color32::BLACK } else { Color32::WHITE }
+}
+
+/// The next free marker number: one more than the highest one in the picture.
+pub fn next_step(shapes: &[Shape]) -> u32 {
+    shapes
+        .iter()
+        .filter_map(|s| if let Shape::Step { n, .. } = s { Some(*n) } else { None })
+        .max()
+        .unwrap_or(0)
+        + 1
+}
+
+/// Where to put a number's top-left corner so its digits sit in the middle of the
+/// marker. Uses the glyph outlines, because digits have no descender.
+pub fn step_text_origin(font: &FontVec, px: f32, center: Pos2, text: &str) -> Pos2 {
+    let sf = font.as_scaled(PxScale::from(px));
+    let mut x = 0.0;
+    let mut prev = None;
+    let mut ink = Rect::NOTHING;
+    for c in text.chars() {
+        let id = sf.glyph_id(c);
+        if let Some(p) = prev {
+            x += sf.kern(p, id);
+        }
+        let glyph = id.with_scale_and_position(PxScale::from(px), ab_glyph::point(x, sf.ascent()));
+        if let Some(o) = font.outline_glyph(glyph) {
+            let b = o.px_bounds();
+            ink = ink.union(Rect::from_min_max(pos2(b.min.x, b.min.y), pos2(b.max.x, b.max.y)));
+        }
+        x += sf.h_advance(id);
+        prev = Some(id);
+    }
+    if !ink.is_positive() {
+        return center;
+    }
+    center - ink.center().to_vec2()
+}
+
+/// How wide the highlighter is: wide enough to cover a line of text.
+pub fn highlight_width(style: &Style) -> f32 {
+    style.width * 4.0 + 10.0
+}
+
+/// How strong the highlighter colour is (it is multiplied with the picture below).
+pub const HIGHLIGHT_ALPHA: u8 = 150;
 
 /// Where the text of an arrow-with-text sits: just behind the arrow's tail,
 /// on the side facing away from the object the arrow points at.
@@ -428,6 +512,44 @@ fn draw_shape(pm: &mut Pixmap, s: &Shape, font: &FontVec) {
             draw_text(pm, font, style.font_px(), *pos, text, style.color);
         }
         Shape::Blur { a, b } => box_blur_region(pm, rect_of(*a, *b)),
+        Shape::Step { pos, n, style } => {
+            let r = step_radius(style);
+            if let Some(path) = PathBuilder::from_circle(pos.x, pos.y, r) {
+                pm.fill_path(&path, &paint(style.color), FillRule::Winding, t, None);
+                // A thin white ring keeps the marker visible on dark and busy pictures.
+                pm.stroke_path(&path, &paint(Color32::WHITE), &stroke((r * 0.1).max(1.0)), t, None);
+            }
+            let px = step_font_px(style);
+            let text = n.to_string();
+            let origin = step_text_origin(font, px, *pos, &text);
+            draw_text(pm, font, px, origin, &text, step_text_color(style.color));
+        }
+        Shape::Highlight { pts, style } => {
+            let c = style.color;
+            let mut p = paint(Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), HIGHLIGHT_ALPHA));
+            // Multiply: dark text below stays dark, white paper takes the colour.
+            p.blend_mode = BlendMode::Multiply;
+            let w = highlight_width(style);
+            let mut pb = PathBuilder::new();
+            match pts.as_slice() {
+                [] => return,
+                [only] => {
+                    pb.move_to(only.x, only.y);
+                    pb.line_to(only.x + 0.01, only.y);
+                }
+                [first, rest @ ..] => {
+                    pb.move_to(first.x, first.y);
+                    for q in rest {
+                        pb.line_to(q.x, q.y);
+                    }
+                }
+            }
+            if let Some(path) = pb.finish() {
+                let mut st = stroke(w);
+                st.line_cap = LineCap::Square;
+                pm.stroke_path(&path, &p, &st, t, None);
+            }
+        }
     }
 }
 
@@ -531,6 +653,9 @@ mod tests {
                 Shape::Pen { pts: vec![pos2(400.0, 200.0), pos2(430.0, 170.0), pos2(470.0, 230.0), pos2(520.0, 180.0)], style: st },
                 Shape::Text { pos: pos2(40.0, 260.0), text: "Hello there".into(), style: st },
                 Shape::Callout { tip: pos2(300.0, 300.0), pos: pos2(400.0, 340.0), text: "Look here\nsecond line".into(), style: st },
+                Shape::Highlight { pts: vec![pos2(30.0, 275.0), pos2(200.0, 275.0)], style: Style { color: Color32::from_rgb(255, 214, 0), width: 4.0 } },
+                Shape::Step { pos: pos2(560.0, 360.0), n: 1, style: st },
+                Shape::Step { pos: pos2(500.0, 360.0), n: 12, style: Style { color: Color32::from_rgb(255, 214, 0), width: 4.0 } },
             ],
         };
         let out = render(&doc, &font, None);

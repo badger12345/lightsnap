@@ -68,7 +68,9 @@ pub struct Prefs {
     /// The shortcut being recorded right now.
     pub capturing: Option<String>,
     sized_for: Option<Tab>,
-    focused: bool,
+    /// Frames left to ask for the focus. The window is still hidden in its first frame
+    /// and macOS ignores "bring to front" then, so it asks again until it has it.
+    focus_tries: u8,
     /// Height of the current tab's contents, to fit the window to it.
     content_h: f32,
     /// The desktop can open its own page for changing the shortcuts (Linux).
@@ -106,7 +108,7 @@ impl Default for Prefs {
             tab: Tab::General,
             capturing: None,
             sized_for: None,
-            focused: false,
+            focus_tries: 0,
             content_h: 0.0,
             can_configure_keys: false,
             wait: 0,
@@ -125,7 +127,7 @@ impl Prefs {
             self.wait = if self.open { 1 } else { 30 };
         }
         self.open = true;
-        self.focused = false;
+        self.focus_tries = 20;
     }
 
     pub fn show(&mut self, ctx: &egui::Context, s: &mut Settings) -> PrefsOut {
@@ -160,9 +162,14 @@ impl Prefs {
         let mut close = false;
         crate::show_immediate(ctx, ViewportId::from_hash_of("lightsnap_prefs"), builder, |ui, _| {
             let ctx = ui.ctx().clone();
-            if !self.focused {
-                self.focused = true;
-                ctx.send_viewport_cmd(ViewportCommand::Focus);
+            if self.focus_tries > 0 {
+                if ctx.input(|i| i.viewport().focused) == Some(true) {
+                    self.focus_tries = 0;
+                } else {
+                    self.focus_tries -= 1;
+                    ctx.send_viewport_cmd(ViewportCommand::Focus);
+                    ctx.request_repaint_after(std::time::Duration::from_millis(30));
+                }
             }
             if self.sized_for != Some(self.tab) {
                 self.sized_for = Some(self.tab);

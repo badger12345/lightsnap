@@ -29,6 +29,9 @@ pub const APP_ID: &str = "io.github.badger12345.LightSnap";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CaptureKind {
     Area,
+    /// The same area as the last "Capture Area" again, without choosing (macOS).
+    /// Works like `Area` while no area is known yet.
+    Previous,
     Window,
     FullScreen,
     Timed(u32),
@@ -39,6 +42,7 @@ impl CaptureKind {
     pub fn label(self) -> String {
         match self {
             CaptureKind::Area => "Capture Area".into(),
+            CaptureKind::Previous => "Capture Previous Area".into(),
             CaptureKind::Window => "Capture Window".into(),
             CaptureKind::FullScreen => "Capture Full Screen".into(),
             CaptureKind::Timed(s) => format!("Timed Capture ({s} s)"),

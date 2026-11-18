@@ -16,8 +16,10 @@ pub enum Tool {
     Line,
     Ellipse,
     Pen,
+    Highlight,
     Text,
     Callout,
+    Step,
     Blur,
     Crop,
 }
@@ -30,8 +32,10 @@ impl Tool {
             Tool::Line => "Line (L)",
             Tool::Ellipse => "Oval (O)",
             Tool::Pen => "Pen (P)",
+            Tool::Highlight => "Highlighter: Shift draws a straight line (H)",
             Tool::Text => "Text (T)",
             Tool::Callout => "Arrow with text: drag onto the object, then type (C)",
+            Tool::Step => "Numbered marker: each click places the next number (N)",
             Tool::Blur => "Blur (B)",
             Tool::Crop => "Crop (X)",
         }
@@ -191,6 +195,19 @@ impl Editor {
                 self.changed();
             }
         }
+    }
+
+    /// Adds a new shape as one undo step and selects it.
+    fn add_shape(&mut self, s: Shape) {
+        let before = self.doc.clone();
+        self.doc.shapes.push(s);
+        self.push_undo(before);
+        self.selected = Some(self.doc.shapes.len() - 1);
+        self.changed();
+    }
+
+    fn new_step(&self, pos: Pos2, style: Style) -> Shape {
+        Shape::Step { pos, n: doc::next_step(&self.doc.shapes), style }
     }
 
     pub fn restyle_selected(&mut self, style: Style) {
@@ -411,6 +428,7 @@ impl Editor {
                 Some(Drag::New { start, cur, pts }) => {
                     let min_len = 3.0 / zoom;
                     let big = start.distance(cur) > min_len;
+                    let straight = ui.input(|i| i.modifiers.shift);
                     let shape = match tool {
                         Tool::Arrow if big => Some(Shape::Arrow { a: start, b: cur, style }),
                         Tool::Line if big => Some(Shape::Line { a: start, b: cur, style }),
@@ -418,6 +436,9 @@ impl Editor {
                         Tool::Ellipse if big => Some(Shape::Ellipse { a: start, b: cur, style }),
                         Tool::Blur if big => Some(Shape::Blur { a: start, b: cur }),
                         Tool::Pen => Some(Shape::Pen { pts, style }),
+                        Tool::Highlight if straight => Some(Shape::Highlight { pts: vec![start, cur], style }),
+                        Tool::Highlight => Some(Shape::Highlight { pts, style }),
+                        Tool::Step => Some(self.new_step(cur, style)),
                         Tool::Text => {
                             self.start_text(cur, None, style, None);
                             None
@@ -434,11 +455,7 @@ impl Editor {
                         _ => None,
                     };
                     if let Some(s) = shape {
-                        let before = self.doc.clone();
-                        self.doc.shapes.push(s);
-                        self.push_undo(before);
-                        self.selected = Some(self.doc.shapes.len() - 1);
-                        self.changed();
+                        self.add_shape(s);
                     }
                 }
                 Some(Drag::Move { before, moved, .. }) => {
@@ -469,6 +486,10 @@ impl Editor {
                                 Tool::Text => self.start_text(p, None, style, None),
                                 Tool::Callout => {
                                     self.start_text(p - vec2(80.0, 60.0) * self.ppp, Some(p), style, None)
+                                }
+                                Tool::Step => {
+                                    let s = self.new_step(p, style);
+                                    self.add_shape(s);
                                 }
                                 _ => {}
                             }
@@ -504,6 +525,11 @@ impl Editor {
                 Tool::Ellipse => Some(Shape::Ellipse { a: *start, b: *cur, style }),
                 Tool::Blur => Some(Shape::Blur { a: *start, b: *cur }),
                 Tool::Pen => Some(Shape::Pen { pts: pts.clone(), style }),
+                Tool::Highlight if ui.input(|i| i.modifiers.shift) => {
+                    Some(Shape::Highlight { pts: vec![*start, *cur], style })
+                }
+                Tool::Highlight => Some(Shape::Highlight { pts: pts.clone(), style }),
+                Tool::Step => Some(self.new_step(*cur, style)),
                 Tool::Callout => Some(Shape::Arrow { a: *start, b: *cur, style }),
                 _ => None,
             };
@@ -663,6 +689,26 @@ fn paint_preview(p: &egui::Painter, s: &Shape, to_screen: &dyn Fn(Pos2) -> Pos2,
             let r = Rect::from_two_pos(to_screen(*a), to_screen(*b));
             p.rect_filled(r, 0.0, Color32::from_white_alpha(40));
             dashed_rect(p, r, Color32::WHITE);
+        }
+        Shape::Step { pos, n, style } => {
+            let r = doc::step_radius(style) * zoom;
+            let c = to_screen(*pos);
+            p.circle(c, r, style.color, Stroke::new((r * 0.1).max(1.0), Color32::WHITE));
+            let text = n.to_string();
+            let px = doc::step_font_px(style);
+            let origin = doc::step_text_origin(font, px, *pos, &text);
+            p.text(to_screen(origin), egui::Align2::LEFT_TOP, text, annot_font(px * zoom), doc::step_text_color(style.color));
+        }
+        Shape::Highlight { pts, style } => {
+            // egui cannot multiply colours; plain see-through colour comes close while drawing.
+            let c = style.color;
+            let st = Stroke::new(doc::highlight_width(style) * zoom, Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 110));
+            let pts: Vec<Pos2> = pts.iter().map(|q| to_screen(*q)).collect();
+            if pts.len() == 1 {
+                p.rect_filled(Rect::from_center_size(pts[0], Vec2::splat(st.width)), 0.0, st.color);
+            } else {
+                p.add(egui::Shape::line(pts, st));
+            }
         }
     }
 }

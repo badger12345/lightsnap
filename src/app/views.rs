@@ -73,6 +73,9 @@ pub(super) fn capture_menu(ui: &mut Ui, st: &Settings) -> Option<Action> {
     if row(ui, "Capture Area", "area") {
         a = Some(Action::Capture(CaptureKind::Area));
     }
+    if cfg!(target_os = "macos") && row(ui, "Capture Previous Area", "previous") {
+        a = Some(Action::Capture(CaptureKind::Previous));
+    }
     if row(ui, "Capture Full Screen", "full") {
         a = Some(Action::Capture(CaptureKind::FullScreen));
     }
@@ -427,16 +430,18 @@ impl LightSnap {
                     }
                 }
             };
-            group(ui, 5, sz.x, TOOL_H, |ui| {
+            group(ui, 6, sz.x, TOOL_H, |ui| {
                 tool_btn(ui, Icon::Arrow, Tool::Arrow, self);
                 tool_btn(ui, Icon::Rect, Tool::Rect, self);
                 tool_btn(ui, Icon::Line, Tool::Line, self);
                 tool_btn(ui, Icon::Ellipse, Tool::Ellipse, self);
                 tool_btn(ui, Icon::Pen, Tool::Pen, self);
+                tool_btn(ui, Icon::Highlight, Tool::Highlight, self);
             });
-            group(ui, 2, sz.x, TOOL_H, |ui| {
+            group(ui, 3, sz.x, TOOL_H, |ui| {
                 tool_btn(ui, Icon::Text, Tool::Text, self);
                 tool_btn(ui, Icon::Callout, Tool::Callout, self);
+                tool_btn(ui, Icon::Step, Tool::Step, self);
             });
             group(ui, 3, sz.x, TOOL_H, |ui| {
                 tool_btn(ui, Icon::Blur, Tool::Blur, self);
@@ -773,8 +778,10 @@ impl LightSnap {
                 (Key::L, Tool::Line),
                 (Key::O, Tool::Ellipse),
                 (Key::P, Tool::Pen),
+                (Key::H, Tool::Highlight),
                 (Key::T, Tool::Text),
                 (Key::C, Tool::Callout),
+                (Key::N, Tool::Step),
                 (Key::B, Tool::Blur),
                 (Key::X, Tool::Crop),
             ];

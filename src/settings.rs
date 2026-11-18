@@ -143,6 +143,21 @@ pub fn key_symbol(code: &str) -> String {
 }
 
 /// The shortcut actions, in the order the Hotkeys tab shows them.
+#[cfg(target_os = "macos")]
+pub const HOTKEY_ACTIONS: [(&str, &str); 8] = [
+    ("area", "Capture area"),
+    ("previous", "Capture previous area"),
+    ("full", "Capture fullscreen"),
+    ("timed", "Fullscreen after delay"),
+    ("window", "Capture window"),
+    ("latest", "Open Latest Image"),
+    ("record", "Record video"),
+    ("clipboard", "Open from Clipboard"),
+];
+
+/// Linux has no "Capture previous area": the desktop's picker does not say which area
+/// was chosen.
+#[cfg(not(target_os = "macos"))]
 pub const HOTKEY_ACTIONS: [(&str, &str); 7] = [
     ("area", "Capture area"),
     ("full", "Capture fullscreen"),
@@ -169,6 +184,7 @@ pub fn default_hotkey(id: &str) -> Option<Hotkey> {
     let linux = cfg!(target_os = "linux");
     match id {
         "area" => Some(Hotkey::new(true, linux, "Digit4")),
+        "previous" if !linux => Some(Hotkey::new(true, true, "Digit4")),
         "full" => Some(Hotkey::new(true, true, "Digit6")),
         "timed" => Some(Hotkey::new(true, linux, "Digit2")),
         "window" if linux => Some(Hotkey::new(true, true, "Digit5")),
