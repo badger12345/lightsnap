@@ -8,6 +8,18 @@ Nothing is uploaded: captures are saved locally and copied to the clipboard.
 Needs a Mac with Apple Silicon and macOS 27 or later, or a Linux desktop running Wayland
 (see [Linux](#linux)).
 
+## Why LightSnap
+
+Screenshot tools tend to get worse over time: accounts, cloud uploads, subscriptions,
+ads, and more memory with every update. LightSnap does one job and stays small.
+
+- **No account, no cloud, no ads, no subscription.** LightSnap makes no network
+  connections. Your captures stay on your computer.
+- **Small:** a 6.4 MB download, 15 MB installed, ffmpeg included.
+- **Light:** while it waits in the menu bar, it uses 0% CPU and about 100 MB of memory
+  (M1 Pro, macOS 27).
+- **Yours to keep:** MIT license. If the project ever goes a way you don't like, fork it.
+
 ## Install (macOS)
 
 The app is not notarized by Apple (that needs a paid developer account), so macOS blocks it
