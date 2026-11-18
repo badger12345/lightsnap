@@ -44,6 +44,10 @@ pub fn open_with(app: &str, path: &Path) {
 }
 
 /// Shows a desktop notification.
+/// macOS only: there the Preferences window has to be put in front by hand. On Wayland
+/// the desktop decides, and `Prefs::open` makes the window again instead.
+pub fn raise_window(_title: &str) {}
+
 pub fn notify(title: &str, body: &str) {
     let (title, body) = (title.to_string(), body.to_string());
     std::thread::spawn(move || {

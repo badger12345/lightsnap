@@ -97,10 +97,14 @@ fn wait_watching_mouse(mut child: Child) -> (bool, Option<(Pos2, Pos2)>) {
 }
 
 fn remember_area(drag: Option<(Pos2, Pos2)>, file: &std::path::Path) {
-    let Some((start, end)) = drag else { return };
+    let Some((start, end)) = drag else {
+        log::info!("area capture: no drag seen");
+        return;
+    };
     let Ok((w, h)) = image::image_dimensions(file) else { return };
     let displays = super::displays();
     let area = area_from_drag(start, end, (w, h), &displays);
+    log::info!("area capture: drag {start:?} to {end:?}, picture {w}x{h}, area {area:?}");
     if let (Some(a), Ok(mut last)) = (area, LAST_AREA.lock()) {
         *last = Some(a);
     }

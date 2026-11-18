@@ -111,10 +111,19 @@ impl LightSnap {
 
     /// Test hooks: LS_TEST_PREFS=1 opens Preferences once, as the menu-bar item does;
     /// LS_TEST_ABOUT=1 opens Preferences › About. On Linux they also run while no window
-    /// is open (the app starts that way after the first start).
+    /// is open (the app starts that way after the first start). LS_TEST_PREFS_AFTER=<s>
+    /// waits that many seconds first (to put another app in front meanwhile).
     pub(super) fn test_open_prefs(&mut self, ctx: &egui::Context) {
         if self.test_prefs_done || self.prefs.open {
             return;
+        }
+        if let Some(secs) = std::env::var("LS_TEST_PREFS_AFTER").ok().and_then(|v| v.parse::<u64>().ok()) {
+            static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+            let left = Duration::from_secs(secs).saturating_sub(START.get_or_init(Instant::now).elapsed());
+            if cfg!(debug_assertions) && !left.is_zero() {
+                ctx.request_repaint_after(left);
+                return;
+            }
         }
         let about = test_env("LS_TEST_ABOUT");
         if about || test_env("LS_TEST_PREFS") {

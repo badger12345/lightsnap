@@ -184,7 +184,6 @@ pub fn default_hotkey(id: &str) -> Option<Hotkey> {
     let linux = cfg!(target_os = "linux");
     match id {
         "area" => Some(Hotkey::new(true, linux, "Digit4")),
-        "previous" if !linux => Some(Hotkey::new(true, true, "Digit4")),
         "full" => Some(Hotkey::new(true, true, "Digit6")),
         "timed" => Some(Hotkey::new(true, linux, "Digit2")),
         "window" if linux => Some(Hotkey::new(true, true, "Digit5")),

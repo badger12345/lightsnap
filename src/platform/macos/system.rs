@@ -94,6 +94,29 @@ fn in_app_bundle() -> bool {
         .is_some_and(|p| p.to_string_lossy().contains(".app/Contents/MacOS/"))
 }
 
+/// Puts LightSnap's window whose title starts with `title` in front of all windows, also
+/// those of other apps, and makes it the key window. Since macOS 14 a menu-bar app can't
+/// take the front with winit's "focus" (the old activation call is ignored).
+pub fn raise_window(title: &str) {
+    let Some(cls) = AnyClass::get(c"NSApplication") else { return };
+    unsafe {
+        let Some(app): Option<Retained<AnyObject>> = msg_send![cls, sharedApplication] else { return };
+        let _: () = msg_send![&*app, activate];
+        let Some(windows): Option<Retained<AnyObject>> = msg_send![&*app, windows] else { return };
+        let n: usize = msg_send![&*windows, count];
+        for i in 0..n {
+            let Some(w): Option<Retained<AnyObject>> = msg_send![&*windows, objectAtIndex: i] else { continue };
+            let Some(t): Option<Retained<AnyObject>> = msg_send![&*w, title] else { continue };
+            let s: *const std::ffi::c_char = msg_send![&*t, UTF8String];
+            if s.is_null() || !std::ffi::CStr::from_ptr(s).to_string_lossy().starts_with(title) {
+                continue;
+            }
+            let _: () = msg_send![&*w, orderFrontRegardless];
+            let _: () = msg_send![&*w, makeKeyWindow];
+        }
+    }
+}
+
 fn main_app_service() -> Option<Retained<AnyObject>> {
     let cls = AnyClass::get(c"SMAppService")?;
     unsafe { msg_send![cls, mainAppService] }

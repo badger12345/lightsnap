@@ -68,8 +68,8 @@ pub struct Prefs {
     /// The shortcut being recorded right now.
     pub capturing: Option<String>,
     sized_for: Option<Tab>,
-    /// Frames left to ask for the focus. The window is still hidden in its first frame
-    /// and macOS ignores "bring to front" then, so it asks again until it has it.
+    /// Frames left to ask for the focus. The window is still hidden in its first frame,
+    /// and another app may be in front, so it asks again until it has it.
     focus_tries: u8,
     /// Height of the current tab's contents, to fit the window to it.
     content_h: f32,
@@ -119,6 +119,9 @@ impl Default for Prefs {
     }
 }
 
+/// How many frames (about 30 ms each) the Preferences window keeps itself in front.
+const FOCUS_FRAMES: u8 = 20;
+
 impl Prefs {
     pub fn open(&mut self) {
         // Wayland ignores "bring to front" for a window that is already open, so on
@@ -127,7 +130,7 @@ impl Prefs {
             self.wait = if self.open { 1 } else { 30 };
         }
         self.open = true;
-        self.focus_tries = 20;
+        self.focus_tries = FOCUS_FRAMES;
     }
 
     pub fn show(&mut self, ctx: &egui::Context, s: &mut Settings) -> PrefsOut {
@@ -162,14 +165,24 @@ impl Prefs {
         let mut close = false;
         crate::show_immediate(ctx, ViewportId::from_hash_of("lightsnap_prefs"), builder, |ui, _| {
             let ctx = ui.ctx().clone();
+            // Keep the window in front for a moment: when it was opened from the menu-bar
+            // menu, macOS hands the focus back to the app that was in front when the menu
+            // closes, which can be a few frames later.
             if self.focus_tries > 0 {
-                if ctx.input(|i| i.viewport().focused) == Some(true) {
-                    self.focus_tries = 0;
-                } else {
-                    self.focus_tries -= 1;
+                self.focus_tries -= 1;
+                let focused = ctx.input(|i| i.viewport().focused) == Some(true);
+                if !focused {
                     ctx.send_viewport_cmd(ViewportCommand::Focus);
-                    ctx.request_repaint_after(std::time::Duration::from_millis(30));
+                    // From the second frame on the window exists and can be put in front
+                    // of other apps' windows too.
+                    if self.focus_tries < FOCUS_FRAMES - 1 {
+                        crate::platform::raise_window("LightSnap | ");
+                    }
+                    if self.focus_tries == 0 {
+                        log::info!("preferences: could not take the focus");
+                    }
                 }
+                ctx.request_repaint_after(std::time::Duration::from_millis(30));
             }
             if self.sized_for != Some(self.tab) {
                 self.sized_for = Some(self.tab);
