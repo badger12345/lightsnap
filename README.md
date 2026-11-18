@@ -1,11 +1,12 @@
 # LightSnap
 
-A light screenshot and screen-recording app for the macOS menu bar. Nothing is uploaded:
-captures are saved locally and copied to the clipboard.
+A light screenshot and screen-recording app for the macOS menu bar and Linux desktops.
+Nothing is uploaded: captures are saved locally and copied to the clipboard.
 
-Needs a Mac with Apple Silicon and macOS 27 or later.
+Needs a Mac with Apple Silicon and macOS 27 or later, or a Linux desktop running Wayland
+(see [Linux](#linux)).
 
-## Install
+## Install (macOS)
 
 The app is not notarized by Apple (that needs a paid developer account), so macOS blocks it
 the first time:
@@ -26,7 +27,7 @@ xattr -dr com.apple.quarantine /Applications/LightSnap.app
 
 To check that your copy was built by badger12345, see [Signing](#signing).
 
-## Build
+## Build (macOS)
 
 Needs Rust (https://rustup.rs) and the Xcode command line tools. `bundle.sh` also needs
 cargo-about: `cargo install --locked --features cli cargo-about`.
@@ -77,6 +78,45 @@ Releases by badger12345 are signed with this certificate:
 To check a copy, run `codesign -d -r- LightSnap.app`. It shows the SHA-1 as
 `certificate leaf = H"…"`.
 
+## Linux
+
+LightSnap runs on Wayland desktops. X11 is not supported. It is tested on GNOME; KDE Plasma
+should work too.
+
+Wayland lets no app read the screen or catch keys on its own, so LightSnap asks the desktop
+through its portals. Your desktop asks you once for each:
+
+- **Screenshots**: full-screen and timed captures. GNOME can ask only while LightSnap's window
+  is in front, so LightSnap shows a note with an **Allow…** button.
+- **Screen sharing**: for recordings. Choose the screen and keep **Remember this selection**.
+- **Global shortcuts**: confirm the keys. To change them later, use your desktop's settings
+  (GNOME: **Settings › Apps › LightSnap**).
+
+Capture Area and Capture Window use your desktop's own screenshot picker. While recording,
+LightSnap has no window: stop or pause it from the tray icon or with the shortcut.
+
+Needs:
+
+- xdg-desktop-portal with a backend for your desktop (GNOME 48+ or KDE Plasma 6 for global
+  shortcuts), PipeWire, and ffmpeg with x264 (`sudo apt install ffmpeg`).
+- GNOME shows the tray icon with the AppIndicator extension (Ubuntu has it; on Fedora install
+  "AppIndicator and KStatusNotifierItem Support").
+
+Install: download `LightSnap-<version>-linux-<arch>.tar.gz` from
+[Releases](https://github.com/badger12345/lightsnap/releases), unpack it anywhere and start
+`lightsnap`. On first start it adds itself to your app list (`~/.local/share/applications`).
+
+Build from source (Ubuntu/Debian package names):
+
+```bash
+sudo apt install build-essential pkg-config clang libclang-dev libpipewire-0.3-dev \
+  libspa-0.2-dev libwayland-dev libxkbcommon-dev libdbus-1-dev ffmpeg
+cargo run                      # run from source
+./scripts/bundle-linux.sh      # build dist/LightSnap-<version>-linux-<arch>.tar.gz
+```
+
+The GitHub workflow `.github/workflows/linux.yml` builds the packages for x86_64 and arm64.
+
 ## Disclaimer
 
 LightSnap is a free, non-commercial hobby project under the MIT License.
@@ -97,5 +137,8 @@ ffmpeg source, its build options and our patch are listed in
 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). `scripts/notices.sh` writes that file from
 `Cargo.lock` and the ffmpeg build; `bundle.sh` runs it and copies it, `LICENSE`, the patch and
 the ffmpeg build script into `LightSnap.app/Contents/Resources/`.
+
+On Linux, ffmpeg is not shipped. `scripts/bundle-linux.sh` writes the crate licenses for the
+Linux build into the package as `THIRD_PARTY_NOTICES.txt`.
 
 Check the dependencies for known security issues with `cargo audit`.

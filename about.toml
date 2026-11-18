@@ -13,8 +13,9 @@ accepted = [
     "MPL-2.0",
     "OFL-1.1",
     "Ubuntu-font-1.0",
+    "Unlicense",
 ]
-# Only what goes into the app binary.
+# Only what goes into the app binary. scripts/bundle-linux.sh passes its own target.
 targets = ["aarch64-apple-darwin"]
 ignore-build-dependencies = true
 ignore-dev-dependencies = true
