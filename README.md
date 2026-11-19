@@ -5,6 +5,8 @@ Nothing is uploaded: captures are saved locally and copied to the clipboard.
 
 ![The LightSnap editor with a frame, a callout, a line, an ellipse, text and a blurred area](docs/editor.png)
 
+## Requirements
+
 Needs a Mac with Apple Silicon and macOS 27 or later, or a Linux desktop running Wayland
 (see [Linux](#linux)).
 
