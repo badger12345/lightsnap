@@ -138,6 +138,9 @@ clipboard, recording). Video work runs in an ffmpeg child process.
 
 `scripts/architecture-diagram.py` draws this diagram. Update it when the module layout changes.
 
+[docs/recording.md](docs/recording.md) shows step by step how a recording runs on macOS
+and on Linux, and why it works that way.
+
 ## Disclaimer
 
 LightSnap is a free, non-commercial hobby project under the MIT License.
