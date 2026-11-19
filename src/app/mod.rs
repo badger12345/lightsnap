@@ -471,7 +471,9 @@ impl eframe::App for LightSnap {
         }
 
         // The window can get shown by macOS itself; keep the flag honest.
-        if ctx.input(|i| i.viewport().focused) == Some(true) {
+        // Not on Linux: there the window is closed to hide it, and it still reports focus
+        // in its last frames, which would open it again (for example while recording).
+        if cfg!(target_os = "macos") && ctx.input(|i| i.viewport().focused) == Some(true) {
             self.visible = true;
         }
 
