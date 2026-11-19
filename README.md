@@ -5,46 +5,46 @@ Nothing is uploaded: captures are saved locally and copied to the clipboard.
 
 https://github.com/user-attachments/assets/b8232ba4-2def-4e8c-8b16-cafa73b4fcb8
 
-
 https://github.com/user-attachments/assets/46ae8e39-80f6-49de-8999-1297302c81de
-
-
 
 ## Why LightSnap
 
-Only a few tools do both screenshots and screen recording.
-Even fewer are free and open source. They also tend to get worse over time: accounts,
-cloud uploads, subscriptions, ads, and more memory with every update. LightSnap does
-both jobs, does them fast, and stays small.
+I am a product owner at a software company. Every day I take what feels like a million
+screenshots and screen recordings: to specify tickets, answer customer requests or
+explain things to colleagues. So I want a tool that creates as little extra work as
+possible.
 
+I don't want to search for the screenshot I just took. It should be in the clipboard
+right away, so I can paste it into the chat. I also don't want to press Cmd+C after I
+annotate it. Every change should update the clipboard, so I can paste the result
+wherever it needs to go. And videos need to be crisp and small at the same time, so I
+can send them without waiting.
+
+Very few tools do both screenshots and screen recordings. Even fewer save me clicks or
+are free and open source. Many also get worse over time: accounts, cloud uploads,
+subscriptions, ads, and more memory with every update. When my last tool started to
+leak several GB of memory, I built my own.
+
+Now I have exactly the simple, lightweight tool I need every day. Maybe you will find
+it useful too.
+
+- **Fewer clicks:** unlike the tools built into macOS and Linux, LightSnap copies every
+  capture and every edit to the clipboard right away. No extra copy step.
 - **2 in 1:** take and annotate screenshots, and record your screen, in one tool.
-- **Fewer clicks:** unlike the tools built into macOS and Linux, LightSnap copies
-  every edit in the image editor to the clipboard right away. No extra copy step.
 - **Small videos:** you choose the frame rate and quality. QuickTime and other built-in
   recorders make huge files that take ages to send. LightSnap keeps them small.
+- **Fast and light:** built for speed. While it waits in the menu bar, it uses 0% CPU
+  and about 100 MB of memory (M1 Pro, macOS 27).
+- **Tiny download:** 6.4 MB on macOS, 15 MB installed, ffmpeg included.
 - **No account, no cloud, no ads, no subscription.** LightSnap makes no network
   connections. Your captures stay on your computer.
 - **Simple:** no frills, no setup. Pick an area, annotate, done.
-- **Tiny download:** 6.4 MB on macOS, 15 MB installed, ffmpeg included.
-- **Fast and light:** built for speed. While it waits in the menu bar, it uses 0% CPU
-  and about 100 MB of memory (M1 Pro, macOS 27).
 - **Yours to keep:** MIT license. If the project ever goes a way you don't like, fork it.
-
-## Features
-
-- **Capture** an area, a window or the full screen, with or without a delay.
-  On macOS, capture the last area again with one shortcut.
-- **Annotate** with arrows, lines, rectangles, ellipses, pen, highlighter, text, callouts,
-  numbered steps and blur. Crop the image.
-- **Record** the screen or an area, with mouse cursor, clicks and microphone if you want.
-  Pause and resume.
-- **Trim and export** recordings as MP4 or GIF.
-- **Shortcuts** for every action, plus "Open Latest Image" and "Open from Clipboard".
 
 ## Requirements
 
-- Needs a Mac with Apple Silicon and macOS 27 or later
-- or a Linux desktop running Wayland (see [Linux](#linux))
+- **Mac:** Apple Silicon and macOS 27 or later
+- **Linux:** a desktop running Wayland (see [Linux](#linux))
 
 ## Install (macOS)
 
