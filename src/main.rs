@@ -117,7 +117,7 @@ fn run_linux(
         if !(first && background) {
             let mut options = make_options();
             options.run_and_return = true;
-            options.viewport = options.viewport.with_visible(true).with_inner_size(state.borrow().window_size());
+            options.viewport = options.viewport.with_visible(true).with_inner_size(state.borrow().open_size());
             if state.borrow().selecting() {
                 // The record area is chosen in this window, over the whole screen.
                 options.viewport = options.viewport.with_fullscreen(true).with_decorations(false);

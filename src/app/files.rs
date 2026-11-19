@@ -93,13 +93,15 @@ impl LightSnap {
         // A freshly opened picture is not an edit; don't copy it again.
         self.clip_version = ed.version;
         self.clip_due = None;
+        // Linux: the window may be closed, so ask the system for the screen.
+        self.refresh_screen();
         let size = ed.doc.size() / ed.ppp;
         let want = vec2((size.x + 60.0).max(980.0), (size.y + 52.0 + 52.0 + 60.0).max(480.0));
-        // At most 75% of the usable screen (below the menu bar), centred on it.
-        let menu_bar = 25.0;
-        let title_bar = 28.0;
+        // At most 75% of the usable screen (below the menu bar / top bar), centred on it.
+        // Never more, even if that is smaller than `want`: the picture is then shown smaller.
+        let (menu_bar, title_bar) = if cfg!(target_os = "linux") { (32.0, 36.0) } else { (25.0, 28.0) };
         let usable = self.monitor - vec2(0.0, menu_bar);
-        let max = (usable * 0.75 - vec2(0.0, title_bar)).max(vec2(900.0, 440.0));
+        let max = (usable * 0.75 - vec2(0.0, title_bar)).max(vec2(320.0, 240.0));
         let inner = want.min(max);
         let outer = inner + vec2(0.0, title_bar);
         self.pending_size = Some(inner);

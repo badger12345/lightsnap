@@ -226,6 +226,7 @@ impl LightSnap {
             perm_prompt: false,
             perm_asking: false,
         };
+        app.refresh_screen();
         if !quiet && !platform::screenshot_allowed() {
             app.perm_prompt = true;
         }
@@ -393,6 +394,27 @@ impl LightSnap {
     /// The size of the main window as a normal window: the last one it had, or the default.
     pub fn window_size(&self) -> Vec2 {
         self.settings.window_size.map(|[w, h]| vec2(w, h)).unwrap_or(vec2(980.0, 620.0))
+    }
+
+    /// The size the window opens in: the one a just opened picture or video asks for, or the
+    /// last one. On Linux the window is made anew each time it shows, and Wayland ignores a
+    /// resize sent before the window is on screen, so the size has to be right from the start.
+    #[cfg(target_os = "linux")]
+    pub fn open_size(&self) -> Vec2 {
+        self.pending_size.unwrap_or_else(|| self.window_size())
+    }
+
+    /// Linux: take the screen size and scale from the system. While the window is closed,
+    /// egui knows neither, and the defaults are the Mac's (a Retina screen).
+    fn refresh_screen(&mut self) {
+        if cfg!(target_os = "linux") {
+            if let Some(d) = platform::displays().first() {
+                if d.bounds.width() > 100.0 {
+                    self.monitor = d.bounds.size();
+                    self.native_ppp = d.scale.max(1.0);
+                }
+            }
+        }
     }
 
     /// Linux: the record area is being chosen; the window opens full screen for it.

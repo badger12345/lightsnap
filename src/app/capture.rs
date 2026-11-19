@@ -4,10 +4,11 @@
 use super::*;
 
 /// Pixels per point of the screen under the mouse, where a capture just ended.
+/// Wayland gives no mouse position; there it is the first screen.
 pub(super) fn capture_scale() -> Option<f32> {
     let displays = platform::displays();
-    let mouse = platform::mouse_position()?;
-    displays.get(platform::display_index_at(&displays, mouse)).map(|d| d.scale.max(1.0))
+    let i = platform::mouse_position().map_or(0, |m| platform::display_index_at(&displays, m));
+    displays.get(i).map(|d| d.scale.max(1.0))
 }
 
 #[derive(Clone, Copy, PartialEq)]
