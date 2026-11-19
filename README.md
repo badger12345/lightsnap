@@ -128,6 +128,16 @@ cargo run                      # run from source
 
 The GitHub workflow `.github/workflows/linux.yml` builds the packages for x86_64 and arm64.
 
+## Architecture
+
+LightSnap is one Rust app with one UI on both systems: egui/eframe, drawn with OpenGL.
+Only `src/platform/` has its own code for macOS and for Linux (tray, shortcuts, screenshots,
+clipboard, recording). Video work runs in an ffmpeg child process.
+
+![LightSnap component diagram (C4 level 3)](docs/architecture.svg)
+
+`scripts/architecture-diagram.py` draws this diagram. Update it when the module layout changes.
+
 ## Disclaimer
 
 LightSnap is a free, non-commercial hobby project under the MIT License.
