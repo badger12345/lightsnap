@@ -20,6 +20,8 @@ solution for that.
 - **2 in 1:** take and annotate screenshots, and record your screen, in one tool.
 - **Fewer clicks:** unlike the tools built into macOS and Linux, LightSnap copies
   every edit in the image editor to the clipboard right away. No extra copy step.
+- **Small videos:** you choose the frame rate and quality. QuickTime and other built-in
+  recorders make huge files that take ages to send. LightSnap keeps them small.
 - **No account, no cloud, no ads, no subscription.** LightSnap makes no network
   connections. Your captures stay on your computer.
 - **Small:** a 6.4 MB download, 15 MB installed, ffmpeg included.
