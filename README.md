@@ -3,10 +3,7 @@
 A light screenshot and screen-recording app for the macOS menu bar and Linux desktops.
 Nothing is uploaded: captures are saved locally and copied to the clipboard.
 
-
 https://github.com/user-attachments/assets/b8232ba4-2def-4e8c-8b16-cafa73b4fcb8
-
-
 
 ## Requirements
 
@@ -15,12 +12,12 @@ Needs a Mac with Apple Silicon and macOS 27 or later, or a Linux desktop running
 
 ## Why LightSnap
 
-There are only few tools that do screenshots and screen video recording at the same time.
-And even fewer of them are free open source. They also tend to get worse over time: accounts,
+Only a few tools do both screenshots and screen recording.
+Even fewer are free and open source. They also tend to get worse over time: accounts,
 cloud uploads, subscriptions, ads, and more memory with every update. LightSnap is the
 solution for that.
 
-- **2 in 1** take screenshots an annotate them, record your screen as a video in one tool
+- **2 in 1:** take and annotate screenshots, and record your screen, in one tool.
 - **No account, no cloud, no ads, no subscription.** LightSnap makes no network
   connections. Your captures stay on your computer.
 - **Small:** a 6.4 MB download, 15 MB installed, ffmpeg included.
