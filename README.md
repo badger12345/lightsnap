@@ -3,7 +3,10 @@
 A light screenshot and screen-recording app for the macOS menu bar and Linux desktops.
 Nothing is uploaded: captures are saved locally and copied to the clipboard.
 
-![The LightSnap editor with a frame, a callout, a line, an ellipse, text and a blurred area](docs/editor.png)
+
+https://github.com/user-attachments/assets/b8232ba4-2def-4e8c-8b16-cafa73b4fcb8
+
+
 
 ## Requirements
 
