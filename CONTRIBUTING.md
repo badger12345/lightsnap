@@ -4,7 +4,7 @@ Thanks for helping. LightSnap is a small hobby project, so please read this firs
 
 ## What fits
 
-LightSnap does one job and stays small. Changes that keep it that way are welcome:
+LightSnap does two jobs, screenshots and recordings, and stays small. Changes that keep it that way are welcome:
 bug fixes, better captures and recordings, editor tools, Linux desktop support, docs.
 
 These will not be merged:
