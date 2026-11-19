@@ -43,6 +43,35 @@ These will not be merged:
 - No local paths (like `/Users/<name>/...` or `/home/<name>/...`) in code, scripts or docs.
   `scripts/bundle.sh` checks the macOS build for them.
 - Do not commit build output (`target/`, `dist/`, `build/`).
+- Check the dependencies for known security issues with `cargo audit`.
+
+## Signing (macOS)
+
+`scripts/bundle.sh` signs the app with a certificate called **LightSnap Dev** if it is in
+your keychain. Without it the app is signed ad hoc. That works too, but macOS then treats
+every new build as a new app and asks for the screen-recording permission again.
+
+The signature pins the exact certificate. macOS keeps the screen-recording permission only
+as long as every build is signed with the same one. A new certificate, or a lost one, makes
+every user grant the permission again. So give it a long life and keep a backup.
+
+To create the certificate once (free, no Apple developer account):
+
+1. Open **Keychain Access** (Spotlight: "Keychain Access", or `open -a "Keychain Access"`).
+2. Menu **Keychain Access › Certificate Assistant › Create a Certificate…**
+3. Name: `LightSnap Dev`, Identity Type: **Self-Signed Root**, Certificate Type: **Code Signing**.
+   Tick **Let me override defaults**, then **Continue**.
+4. Validity Period: `7300` days (20 years). Click **Continue** on the following pages and keep
+   the defaults. Leave the email address empty, it would show in every signed app.
+5. Keychain: **login**. Click **Create**.
+
+The first build after that asks whether `codesign` may use the key: choose **Always Allow**.
+To use a different certificate, set `LIGHTSNAP_SIGN_ID="<name>"`. `bundle.sh` warns 90 days
+before the certificate expires and stops if two certificates have the same name.
+
+**Backup:** In Keychain Access, under **My Certificates**, right-click **LightSnap Dev ›
+Export**, save as `.p12` with a strong password, and keep the file and password in a password
+manager. To restore it on another Mac, double-click the file.
 
 ## License
 

@@ -5,11 +5,6 @@ Nothing is uploaded: captures are saved locally and copied to the clipboard.
 
 https://github.com/user-attachments/assets/b8232ba4-2def-4e8c-8b16-cafa73b4fcb8
 
-## Requirements
-
-Needs a Mac with Apple Silicon and macOS 27 or later, or a Linux desktop running Wayland
-(see [Linux](#linux)).
-
 ## Why LightSnap
 
 Only a few tools do both screenshots and screen recording.
@@ -25,10 +20,26 @@ both jobs, does them fast, and stays small.
 - **No account, no cloud, no ads, no subscription.** LightSnap makes no network
   connections. Your captures stay on your computer.
 - **Simple:** no frills, no setup. Pick an area, annotate, done.
-- **Tiny download:** 6.4 MB, 15 MB installed, ffmpeg included.
+- **Tiny download:** 6.4 MB on macOS, 15 MB installed, ffmpeg included.
 - **Fast and light:** built for speed. While it waits in the menu bar, it uses 0% CPU
   and about 100 MB of memory (M1 Pro, macOS 27).
 - **Yours to keep:** MIT license. If the project ever goes a way you don't like, fork it.
+
+## Features
+
+- **Capture** an area, a window or the full screen, with or without a delay.
+  On macOS, capture the last area again with one shortcut.
+- **Annotate** with arrows, lines, rectangles, ellipses, pen, highlighter, text, callouts,
+  numbered steps and blur. Crop the image.
+- **Record** the screen or an area, with mouse cursor, clicks and microphone if you want.
+  Pause and resume.
+- **Trim and export** recordings as MP4 or GIF.
+- **Shortcuts** for every action, plus "Open Latest Image" and "Open from Clipboard".
+
+## Requirements
+
+Needs a Mac with Apple Silicon and macOS 27 or later, or a Linux desktop running Wayland
+(see [Linux](#linux)).
 
 ## Install (macOS)
 
@@ -69,38 +80,14 @@ LightSnap uses this build, or else an ffmpeg from Homebrew.
 
 ## Signing
 
-`scripts/bundle.sh` signs the app with a certificate called **LightSnap Dev** if it is in
-your keychain. Without it the app is signed ad hoc. That works too, but macOS then treats
-every new build as a new app and asks for the screen-recording permission again.
-
-The signature pins the exact certificate. macOS keeps the screen-recording permission only
-as long as every build is signed with the same one. A new certificate, or a lost one, makes
-every user grant the permission again. So give it a long life and keep a backup.
-
-To create the certificate once (free, no Apple developer account):
-
-1. Open **Keychain Access** (Spotlight: "Keychain Access", or `open -a "Keychain Access"`).
-2. Menu **Keychain Access › Certificate Assistant › Create a Certificate…**
-3. Name: `LightSnap Dev`, Identity Type: **Self-Signed Root**, Certificate Type: **Code Signing**.
-   Tick **Let me override defaults**, then **Continue**.
-4. Validity Period: `7300` days (20 years). Click **Continue** on the following pages and keep
-   the defaults. Leave the email address empty, it would show in every signed app.
-5. Keychain: **login**. Click **Create**.
-
-The first build after that asks whether `codesign` may use the key: choose **Always Allow**.
-To use a different certificate, set `LIGHTSNAP_SIGN_ID="<name>"`. `bundle.sh` warns 90 days
-before the certificate expires and stops if two certificates have the same name.
-
-**Backup:** In Keychain Access, under **My Certificates**, right-click **LightSnap Dev ›
-Export**, save as `.p12` with a strong password, and keep the file and password in a password
-manager. To restore it on another Mac, double-click the file.
-
-Releases by badger12345 are signed with this certificate:
+Releases by badger12345 are signed with a self-signed certificate:
 
     LightSnap Dev, SHA-1 d51bd93470b3635b5b854c8edb609a7709b3f3a6
 
 To check a copy, run `codesign -d -r- LightSnap.app`. It shows the SHA-1 as
 `certificate leaf = H"…"`.
+
+To sign your own builds, see [Signing](CONTRIBUTING.md#signing-macos) in CONTRIBUTING.
 
 ## Linux
 
@@ -164,5 +151,3 @@ the ffmpeg build script into `LightSnap.app/Contents/Resources/`.
 
 On Linux, ffmpeg is not shipped. `scripts/bundle-linux.sh` writes the crate licenses for the
 Linux build into the package as `THIRD_PARTY_NOTICES.txt`.
-
-Check the dependencies for known security issues with `cargo audit`.
