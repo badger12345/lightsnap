@@ -14,8 +14,8 @@ Needs a Mac with Apple Silicon and macOS 27 or later, or a Linux desktop running
 
 Only a few tools do both screenshots and screen recording.
 Even fewer are free and open source. They also tend to get worse over time: accounts,
-cloud uploads, subscriptions, ads, and more memory with every update. LightSnap is the
-solution for that.
+cloud uploads, subscriptions, ads, and more memory with every update. LightSnap does
+both jobs, does them fast, and stays small.
 
 - **2 in 1:** take and annotate screenshots, and record your screen, in one tool.
 - **Fewer clicks:** unlike the tools built into macOS and Linux, LightSnap copies
@@ -24,9 +24,10 @@ solution for that.
   recorders make huge files that take ages to send. LightSnap keeps them small.
 - **No account, no cloud, no ads, no subscription.** LightSnap makes no network
   connections. Your captures stay on your computer.
-- **Small:** a 6.4 MB download, 15 MB installed, ffmpeg included.
-- **Light:** while it waits in the menu bar, it uses 0% CPU and about 100 MB of memory
-  (M1 Pro, macOS 27).
+- **Simple:** no frills, no setup. Pick an area, annotate, done.
+- **Tiny download:** 6.4 MB, 15 MB installed, ffmpeg included.
+- **Fast and light:** built for speed. While it waits in the menu bar, it uses 0% CPU
+  and about 100 MB of memory (M1 Pro, macOS 27).
 - **Yours to keep:** MIT license. If the project ever goes a way you don't like, fork it.
 
 ## Install (macOS)
