@@ -5,6 +5,11 @@ Nothing is uploaded: captures are saved locally and copied to the clipboard.
 
 https://github.com/user-attachments/assets/b8232ba4-2def-4e8c-8b16-cafa73b4fcb8
 
+
+https://github.com/user-attachments/assets/46ae8e39-80f6-49de-8999-1297302c81de
+
+
+
 ## Why LightSnap
 
 Only a few tools do both screenshots and screen recording.
@@ -38,8 +43,8 @@ both jobs, does them fast, and stays small.
 
 ## Requirements
 
-Needs a Mac with Apple Silicon and macOS 27 or later, or a Linux desktop running Wayland
-(see [Linux](#linux)).
+- Needs a Mac with Apple Silicon and macOS 27 or later
+- or a Linux desktop running Wayland (see [Linux](#linux))
 
 ## Install (macOS)
 
