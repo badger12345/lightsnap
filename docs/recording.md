@@ -114,8 +114,8 @@ quality settings). Linux cannot record without ffmpeg.
 
 **Linux (Wayland only)**
 
-- **Wayland only, no X11.** Ubuntu, Fedora and KDE use Wayland by default. An X11 port would
-  run poorly on most current desktops.
+- **Wayland only, no X11.** X11 is de facto replaced: Ubuntu, Fedora and KDE use Wayland by
+  default. Supporting X11 too would double the platform code for a shrinking share of desktops.
 - **Screen access goes through the ScreenCast portal.** Wayland lets no app read the screen.
   The portal asks the person once; the restore token remembers the answer.
 - **LightSnap reads PipeWire itself.** The ffmpeg in current Ubuntu cannot read PipeWire.
