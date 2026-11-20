@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>io.github.badger12345.lightsnap</string>
+    <string>io.github.pschu13r.lightsnap</string>
     <key>CFBundleName</key>
     <string>LightSnap</string>
     <key>CFBundleDisplayName</key>

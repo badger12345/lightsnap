@@ -100,6 +100,7 @@ pub fn editor_label(app: &str) -> String {
 /// what was allowed. A package or AppImage tool that installed one wins; otherwise one
 /// goes into ~/.local/share and is kept pointing at this binary.
 pub fn prepare() {
+    migrate_old_app_id();
     let name = format!("{}.desktop", super::APP_ID);
     let user_dir = dirs::data_dir();
     let system_dirs = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
@@ -113,7 +114,7 @@ pub fn prepare() {
     }
     let exe = std::env::var_os("APPIMAGE").map(PathBuf::from).or_else(|| std::env::current_exe().ok());
     let Some(exe) = exe else { return };
-    let entry = include_str!("../../../linux/io.github.badger12345.LightSnap.desktop")
+    let entry = include_str!("../../../linux/io.github.pschu13r.LightSnap.desktop")
         .replace("Exec=lightsnap", &format!("Exec={}", desktop_quote(&exe.display().to_string())));
     let path = data.join("applications").join(&name);
     if std::fs::read_to_string(&path).ok().as_deref() != Some(entry.as_str()) {
@@ -123,7 +124,25 @@ pub fn prepare() {
     let icon = data.join("icons/hicolor/256x256/apps").join(format!("{}.png", super::APP_ID));
     if !icon.is_file() {
         let _ = std::fs::create_dir_all(icon.parent().unwrap_or(Path::new(".")));
-        let _ = std::fs::write(&icon, include_bytes!("../../../linux/io.github.badger12345.LightSnap.png"));
+        let _ = std::fs::write(&icon, include_bytes!("../../../linux/io.github.pschu13r.LightSnap.png"));
+    }
+}
+
+/// Up to v0.4.2 the app id was `OLD_APP_ID`. Removes the .desktop file and icon written
+/// under it and moves "Launch at login" to the new id. The portals ask once more for
+/// what they allowed the old id.
+fn migrate_old_app_id() {
+    let old = super::OLD_APP_ID;
+    if let Some(data) = dirs::data_dir() {
+        let _ = std::fs::remove_file(data.join("applications").join(format!("{old}.desktop")));
+        let _ = std::fs::remove_file(data.join("icons/hicolor/256x256/apps").join(format!("{old}.png")));
+    }
+    if let Some(config) = dirs::config_dir() {
+        let autostart = config.join("autostart").join(format!("{old}.desktop"));
+        if autostart.is_file() {
+            let _ = std::fs::remove_file(&autostart);
+            set_login_item(true);
+        }
     }
 }
 

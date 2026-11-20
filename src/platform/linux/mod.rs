@@ -20,4 +20,4 @@ pub use recording::*;
 pub use system::*;
 pub use tray::*;
 
-use super::APP_ID;
+use super::{APP_ID, OLD_APP_ID};

@@ -63,6 +63,6 @@ cat "$RUST"
 
 echo "==> Packing $NAME"
 install -m 755 "$BIN" "$STAGE/lightsnap"
-cp LICENSE linux/io.github.badger12345.LightSnap.desktop linux/io.github.badger12345.LightSnap.png "$STAGE/"
+cp LICENSE linux/io.github.pschu13r.LightSnap.desktop linux/io.github.pschu13r.LightSnap.png "$STAGE/"
 tar -czf "dist/$NAME.tar.gz" -C dist/linux "$NAME"
 echo "==> Wrote dist/$NAME.tar.gz"

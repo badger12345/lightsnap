@@ -46,8 +46,21 @@ pub fn editor_label(app: &str) -> String {
     Path::new(app).file_stem().and_then(|s| s.to_str()).unwrap_or(app).to_string()
 }
 
-/// Runs once at start. Nothing to do on macOS: the app bundle tells the system about LightSnap.
-pub fn prepare() {}
+/// Runs once at start. The app bundle tells the system about LightSnap. Only a LaunchAgent
+/// from a version before the app id changed (v0.4.2 and older) is moved to the new label.
+/// A login item set up through SMAppService can't be carried over: it belongs to the old
+/// bundle id, so "Launch at login" has to be switched on again once.
+pub fn prepare() {
+    let Some(old) = dirs::home_dir()
+        .map(|h| h.join("Library/LaunchAgents").join(format!("{OLD_AGENT_LABEL}.plist")))
+    else {
+        return;
+    };
+    if old.is_file() {
+        let _ = std::fs::remove_file(&old);
+        set_login_item(true);
+    }
+}
 
 /// Sets up the app's event loop: a menu-bar app without a Dock icon. With `quiet`
 /// (check pictures) the app also starts without taking focus.
@@ -153,7 +166,8 @@ pub fn set_login_item(on: bool) {
     set_launch_agent(on);
 }
 
-const AGENT_LABEL: &str = "io.github.badger12345.lightsnap.login";
+const AGENT_LABEL: &str = "io.github.pschu13r.lightsnap.login";
+const OLD_AGENT_LABEL: &str = "io.github.badger12345.lightsnap.login";
 
 fn agent_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join("Library/LaunchAgents").join(format!("{AGENT_LABEL}.plist")))

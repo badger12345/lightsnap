@@ -8,7 +8,7 @@ const TEXT: Color32 = Color32::from_rgb(232, 232, 236);
 const DIM: Color32 = Color32::from_rgb(140, 140, 146);
 
 const REPO: &str = "https://github.com/pschu13r/lightsnap";
-const ICON_PNG: &[u8] = include_bytes!("../linux/io.github.badger12345.LightSnap.png");
+const ICON_PNG: &[u8] = include_bytes!("../linux/io.github.pschu13r.LightSnap.png");
 
 /// Draws the About tab of the settings window. `icon` holds the app icon once loaded.
 pub fn draw(ui: &mut egui::Ui, icon: &mut Option<TextureHandle>) {

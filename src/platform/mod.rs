@@ -24,7 +24,12 @@ compile_error!("LightSnap runs on macOS and Linux. A port adds src/platform/<os>
 
 /// The app id. On Linux it names the .desktop file and is how the portals remember
 /// what was allowed.
-pub const APP_ID: &str = "io.github.badger12345.LightSnap";
+pub const APP_ID: &str = "io.github.pschu13r.LightSnap";
+
+/// The app id up to v0.4.2, before the GitHub account was renamed. `prepare()` moves
+/// what an older version left under it to the new id.
+#[cfg(target_os = "linux")]
+pub const OLD_APP_ID: &str = "io.github.badger12345.LightSnap";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CaptureKind {
