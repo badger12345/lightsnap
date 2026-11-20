@@ -117,19 +117,25 @@ quality settings). Linux cannot record without ffmpeg.
 - **Wayland only, no X11.** X11 is de facto replaced: Ubuntu, Fedora and KDE use Wayland by
   default. Supporting X11 too would double the platform code for a shrinking share of desktops.
 - **Screen access goes through the ScreenCast portal.** Wayland lets no app read the screen.
-  The portal asks the person once; the restore token remembers the answer.
+  The portal asks the person once; the restore token remembers the answer. LightSnap asks
+  for all screens: GNOME gives one stream per screen, KDE one per screen or, with "full
+  workspace", one stream of the whole desktop without a position. Each screen is cut out of
+  the stream that shows it (`locate` in `recording.rs`).
 - **LightSnap reads PipeWire itself.** The ffmpeg in current Ubuntu cannot read PipeWire.
 - **Frames go to ffmpeg through a named pipe, at a steady rate.** The compositor sends a
   frame only when the screen changes. The writer repeats the newest frame `fps` times a
   second, so the video has an even frame rate.
-- **The screen stays shared from the still picture to the end of the recording.** The person
-  picks the screen once, and the recording starts at once.
+- **The screens stay shared from the still pictures to the end of the recording.** The
+  person picks them once, and the recording starts at once. The recording feeds only the
+  screen that holds the area into ffmpeg.
 - **The area is chosen in the full-screen main window.** Wayland can neither place windows
-  nor reliably put a new one in front. The window goes full screen on the shared screen
-  (the compositor may first open it on another one; LightSnap moves it). For the same
+  nor reliably put a new one in front, and it tells no app where the mouse is. The window
+  goes full screen where the compositor opens it (usually the screen with the mouse) and
+  shows that screen's picture. Only if that screen was not shared, LightSnap moves it to a
+  shared one. A frame can't reach across screens on Linux. For the same
   reason there is no control bar while recording: the tray and the shortcuts control it.
   Where no red frame can be drawn (GNOME), a 3 s countdown shows the area first.
-- **Area screenshots use the same selection.** The shared screen's frozen picture, without
+- **Area screenshots use the same selection.** The screen's frozen picture, without
   the mouse pointer; the picture is taken when the mouse is let go, as with
   `screencapture -i` on macOS. The desktop's own pickers ask for an extra click (GNOME) or
   offer no area at all (KDE). The screen is shared only while choosing.

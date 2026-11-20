@@ -459,9 +459,10 @@ impl LightSnap {
         ctx.set_glyph_rasterizers(Vec::new());
     }
 
-    /// Linux: the area is chosen on the shared screen's frozen picture, in the main window
-    /// full screen. The compositor opens it where the mouse or focus is, which may be another
-    /// screen: move it to the shared one, once per selection.
+    /// Linux: the area is chosen in the main window, full screen. The compositor opens it
+    /// where the mouse or focus is; Wayland tells no app where the mouse is, but the window
+    /// learns its screen. Show that screen's frozen picture there. If that screen was not
+    /// shared, move the window to the first shared one. Once per selection.
     #[cfg(target_os = "linux")]
     fn place_selection(&mut self, frame: &eframe::Frame) {
         let Some(sel) = &mut self.select else { return };
@@ -472,12 +473,21 @@ impl LightSnap {
         // Until the window is on a screen, the compositor has not chosen one yet.
         let Some(current) = win.current_monitor() else { return };
         sel.placed = true;
-        let Some(target) = platform::shared_output_name() else { return };
-        if current.name().as_deref() == Some(target.as_str()) {
+        let here = current.name().and_then(|n| platform::output_bounds(&n));
+        if let Some(i) = here.and_then(|b| sel.screens.iter().position(|s| s.bounds.min == b.min)) {
+            log::info!(target: "lightsnap", "selection on {:?} (screen {i})", current.name());
+            sel.shown = i;
+            if sel.shot.is_none() {
+                // The record area starts on this screen too.
+                let b = sel.screens[i].bounds;
+                sel.rect = Some(Rect::from_center_size(b.center(), b.size() * 0.75));
+            }
             return;
         }
+        let Some(first) = sel.screens.first() else { return };
+        let Some(target) = platform::output_name_at(first.bounds.min) else { return };
         if let Some(m) = win.available_monitors().find(|m| m.name().as_deref() == Some(target.as_str())) {
-            log::info!(target: "lightsnap", "selection opened on {:?}, moving it to the shared screen {target}", current.name());
+            log::info!(target: "lightsnap", "selection opened on {:?}, not shared; moving it to {target}", current.name());
             // KWin keeps a window that is already full screen where it is: leave full screen
             // first, then ask for it on the shared screen.
             win.set_fullscreen(None);

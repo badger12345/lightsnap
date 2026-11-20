@@ -38,21 +38,26 @@ delegate_registry!(State);
 pub fn displays() -> Vec<Display> {
     let mut list: Vec<Display> = outputs().into_iter().map(|(d, _)| d).collect();
     list.sort_by(|a, b| (a.bounds.min.x + a.bounds.min.y).total_cmp(&(b.bounds.min.x + b.bounds.min.y)));
-    // While a screen is shared for recording, it comes first: it is screen 0 to the recorder.
-    if let Some((x, y)) = super::recording::shared_screen_position() {
-        if let Some(i) = list.iter().position(|d| d.bounds.min == pos2(x as f32, y as f32)) {
-            let d = list.remove(i);
-            list.insert(0, d);
-        }
+    // While screens are shared, they come first: screen N is input N to the recorder, and
+    // `capture_all_screens` has a picture of each.
+    let shared = super::recording::shared_rects();
+    if !shared.is_empty() {
+        let is_shared = |d: &Display| shared.iter().any(|r| r.expand(1.0).contains_rect(d.bounds));
+        let (mut first, rest): (Vec<Display>, Vec<Display>) = list.into_iter().partition(|d| is_shared(d));
+        first.extend(rest);
+        list = first;
     }
     list
 }
 
-/// The name of the shared screen ("DP-1"), as the compositor calls it. The area is chosen
-/// in a window full screen on that screen: it shows that screen's frozen picture.
-pub fn shared_output_name() -> Option<String> {
-    let (x, y) = super::recording::shared_screen_position()?;
-    outputs().into_iter().find(|(d, _)| d.bounds.min == pos2(x as f32, y as f32)).and_then(|(_, n)| n)
+/// The name of the screen at `pos` ("DP-1"), as the compositor calls it.
+pub fn output_name_at(pos: Pos2) -> Option<String> {
+    outputs().into_iter().find(|(d, _)| d.bounds.min == pos).and_then(|(_, n)| n)
+}
+
+/// Where the screen named `name` is on the desktop, in points.
+pub fn output_bounds(name: &str) -> Option<Rect> {
+    outputs().into_iter().find(|(_, n)| n.as_deref() == Some(name)).map(|(d, _)| d.bounds)
 }
 
 /// The screens with their names, in the compositor's order.

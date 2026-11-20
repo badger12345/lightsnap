@@ -47,9 +47,11 @@ pub(super) struct Select {
     /// window was open before (it opens again afterwards). As with `screencapture -i` on
     /// macOS, the picture is taken when the mouse is let go: no button, no Enter.
     pub(super) shot: Option<bool>,
-    /// Linux: the full-screen window was put on the shared screen (see `place_selection`).
+    /// Linux: the screen the full-screen window opened on was found (see `place_selection`).
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub(super) placed: bool,
+    /// Linux: the screen whose picture the full-screen main window shows (index in `screens`).
+    pub(super) shown: usize,
 }
 
 /// Linux: how long the chosen area is shown before the recording starts.
@@ -304,7 +306,8 @@ impl LightSnap {
         let settings = &mut self.settings;
         let devices = &self.devices;
         let has_ff = self.ffmpeg.is_some();
-        let Select { screens, rect, before_full, drag, settings_open, focused, countdown, shot, .. } = sel;
+        let Select { screens, rect, before_full, drag, settings_open, focused, countdown, shot, shown, .. } = sel;
+        let shown = *shown;
         let shot_mode = shot.is_some();
         let all = screens.iter().fold(Rect::NOTHING, |a, s| a.union(s.bounds));
         let bounds_list: Vec<Rect> = screens.iter().map(|s| s.bounds).collect();
@@ -323,7 +326,7 @@ impl LightSnap {
             .unwrap_or(0);
         let mouse_i = platform::mouse_position()
             .and_then(|m| bounds_list.iter().position(|b| b.contains(m)))
-            .unwrap_or(0);
+            .unwrap_or(shown);
         let mut out = SelectOut::None;
         let mut any_focus_sent = *focused;
 
@@ -539,7 +542,12 @@ impl LightSnap {
                     if gear_resp.clicked() {
                         *settings_open = !*settings_open;
                     }
-                    let hint = "Drag to move or resize — also onto another screen";
+                    // Linux: one screen per selection (see place_selection).
+                    let hint = if cfg!(target_os = "linux") {
+                        "Drag to move or resize"
+                    } else {
+                        "Drag to move or resize — also onto another screen"
+                    };
                     let galley = painter.layout_no_wrap(hint.into(), FontId::proportional(13.0), Color32::WHITE);
                     let hr = Rect::from_center_size(pos2(c.x, rec_rect.min.y - 20.0), galley.size() + vec2(16.0, 8.0));
                     painter.rect_filled(hr, 6.0, Color32::from_black_alpha(170));
@@ -570,7 +578,7 @@ impl LightSnap {
                 out
             };
             let res = match root.as_deref_mut() {
-                Some(ui) if si == 0 => {
+                Some(ui) if si == shown => {
                     let mut body = body;
                     body(ui, egui::ViewportClass::Root)
                 }

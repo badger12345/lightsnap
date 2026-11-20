@@ -350,6 +350,7 @@ impl LightSnap {
                                 countdown: None,
                                 shot: Some(show_after),
                                 placed: false,
+                                shown: 0,
                             });
                             ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
                         }
@@ -378,6 +379,7 @@ impl LightSnap {
                                 countdown: None,
                                 shot: None,
                                 placed: false,
+                                shown: 0,
                             });
                             ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
                         }

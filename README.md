@@ -106,14 +106,16 @@ through its portals. Your desktop asks you once for each:
 
 - **Screenshots**: full-screen and timed captures. GNOME can ask only while LightSnap's window
   is in front, so LightSnap shows a note with an **Allow…** button.
-- **Screen sharing**: for recordings and area screenshots. Choose the screen and keep
-  **Remember this selection**.
+- **Screen sharing**: for recordings and area screenshots. Choose all your screens (on KDE
+  the tiles, or **Share full Workspace**) and keep **Remember this selection**. The desktop
+  asks again when your screens change.
 - **Global shortcuts**: confirm the keys. To change them later, use your desktop's settings
   (GNOME: **Settings › Apps › LightSnap**).
 
 Capture Area works as on macOS: the screen freezes, you drag a frame, and when you let go
-the picture is taken (and copied). No button, no Enter. The area is chosen on the shared
-screen; with several screens that is the one you picked when sharing. Capture Window uses
+the picture is taken (and copied). No button, no Enter. With several screens the area is
+chosen on the screen the desktop opens LightSnap on, usually the one with the mouse; a frame
+can't reach across two screens. Capture Window uses
 your desktop's own picker. While recording,
 LightSnap has no window: stop or pause it from the tray icon or with the shortcut. On KDE
 Plasma, Sway, Hyprland and COSMIC a red frame shows the recorded area, as on macOS (orange

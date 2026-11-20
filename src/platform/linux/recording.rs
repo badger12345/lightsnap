@@ -1,11 +1,13 @@
 //! Screen recording on Wayland. An app may not read the screen itself, so:
 //!
-//! 1. The ScreenCast portal asks the person which screen to share (once: the answer is
-//!    kept as a restore token) and hands out a PipeWire stream of it.
-//! 2. A PipeWire thread keeps the newest frame of that stream.
-//! 3. The first frame is the still picture the record area is chosen on.
-//! 4. While recording, a writer thread feeds frames at a steady rate into a named pipe
-//!    that ffmpeg reads as raw video; ffmpeg crops and encodes as on macOS.
+//! 1. The ScreenCast portal asks the person which screens to share (once: the answer is
+//!    kept as a restore token) and hands out a PipeWire stream per screen. KDE can also
+//!    share the whole desktop as one stream.
+//! 2. A PipeWire thread per stream keeps its newest frame.
+//! 3. The first frames are the still pictures the area is chosen on, one per screen.
+//! 4. While recording, a writer thread cuts the recorded screen out of its stream and
+//!    feeds it at a steady rate into a named pipe that ffmpeg reads as raw video; ffmpeg
+//!    crops and encodes as on macOS.
 //!
 //! The session ends with `end_screen_session`, or when LightSnap quits.
 
@@ -31,20 +33,27 @@ struct Frame {
     /// ffmpeg's name for the pixel layout ("bgr0", "rgba", ...).
     pix_fmt: &'static str,
     data: Arc<Vec<u8>>,
-    /// Counts up with every frame the compositor sends.
+    /// Counts up with every frame any stream sends (see `SEQ`).
     seq: u64,
+}
+
+/// One shared stream: a screen, or the whole desktop.
+struct Source {
+    frame: Arc<Mutex<Option<Frame>>>,
+    stop: pw::channel::Sender<()>,
+    thread: Option<std::thread::JoinHandle<()>>,
+    /// What the stream shows, in points on the desktop: x, y, width, height.
+    rect: Option<(i32, i32, i32, i32)>,
 }
 
 struct Cast {
     session: ashpd::desktop::Session<Screencast>,
-    frame: Arc<Mutex<Option<Frame>>>,
-    stop: pw::channel::Sender<()>,
-    thread: Option<std::thread::JoinHandle<()>>,
-    /// Where the shared screen sits on the desktop, in points.
-    position: Option<(i32, i32)>,
+    sources: Vec<Source>,
 }
 
 static CAST: Mutex<Option<Cast>> = Mutex::new(None);
+/// Numbers the frames of all streams in the order they come.
+static SEQ: AtomicU64 = AtomicU64::new(0);
 /// Whether LightSnap's main window is on screen, and the number of the newest frame when
 /// it last closed. Frames up to that one may still show it (see `feed`).
 static WINDOW_OPEN: AtomicBool = AtomicBool::new(false);
@@ -52,13 +61,15 @@ static CLOSED_AT_SEQ: AtomicU64 = AtomicU64::new(0);
 /// Description → PulseAudio source name, filled by `list_devices`.
 static SOURCES: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
 
-/// Where the restore token lives, so the person picks the screen only once.
+/// Where the restore token lives, so the person picks the screens only once. Up to v0.4.2
+/// one screen was shared (`screencast-token`); the new name makes the portal ask once more,
+/// now for all screens.
 fn token_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("LightSnap").join("screencast-token"))
+    dirs::config_dir().map(|d| d.join("LightSnap").join("screencast-token-screens"))
 }
 
-/// Starts sharing a screen: asks the portal (a dialog the first time), then connects to
-/// the PipeWire stream. Blocks until the first frame is there.
+/// Starts sharing the screens: asks the portal (a dialog the first time), then connects
+/// to the PipeWire streams. Blocks until every stream sent its first frame.
 fn start_cast(cursor: bool) -> Result<(), String> {
     end_screen_session();
     super::portal::register();
@@ -74,17 +85,21 @@ fn start_cast(cursor: bool) -> Result<(), String> {
                 SelectSourcesOptions::default()
                     .set_cursor_mode(cursor_mode)
                     .set_sources(SourceType::MONITOR)
-                    .set_multiple(false)
+                    .set_multiple(true)
                     .set_persist_mode(PersistMode::ExplicitlyRevoked)
                     .set_restore_token(token.as_deref().filter(|t| !t.is_empty())),
             )
             .await?
             .response()?;
         let streams = proxy.start(&session, None, Default::default()).await?.response()?;
-        let fd = proxy.open_pipe_wire_remote(&session, Default::default()).await?;
-        Ok((session, streams, fd))
+        // One PipeWire connection per stream: each runs in its own thread.
+        let mut fds = Vec::new();
+        for _ in streams.streams() {
+            fds.push(proxy.open_pipe_wire_remote(&session, Default::default()).await?);
+        }
+        Ok((session, streams, fds))
     });
-    let (session, streams, fd) = match res {
+    let (session, streams, fds) = match res {
         Ok(v) => v,
         Err(e) => return Err(format!("{e}")),
     };
@@ -94,44 +109,55 @@ fn start_cast(cursor: bool) -> Result<(), String> {
         }
         let _ = std::fs::write(p, t);
     }
-    let Some(stream) = streams.streams().first() else {
+    if streams.streams().is_empty() {
         let _ = pollster::block_on(session.close());
         return Err("no screen was shared".into());
-    };
-    let node = stream.pipe_wire_node_id();
-    let position = stream.position();
-    let frame: Arc<Mutex<Option<Frame>>> = Arc::new(Mutex::new(None));
-    let (stop, stop_rx) = pw::channel::channel::<()>();
-    let f = frame.clone();
-    let thread = std::thread::Builder::new()
-        .name("pipewire".into())
-        .spawn(move || {
-            if let Err(e) = run_stream(fd, node, f, stop_rx) {
-                log::warn!(target: "lightsnap", "pipewire: {e}");
-            }
-        })
-        .map_err(|e| e.to_string())?;
+    }
+    let mut sources = Vec::new();
+    for (stream, fd) in streams.streams().iter().zip(fds) {
+        let node = stream.pipe_wire_node_id();
+        let rect = match (stream.position(), stream.size()) {
+            (Some((x, y)), Some((w, h))) => Some((x, y, w, h)),
+            _ => None,
+        };
+        log::info!(target: "lightsnap", "shared stream {node}: {rect:?}");
+        let frame: Arc<Mutex<Option<Frame>>> = Arc::new(Mutex::new(None));
+        let (stop, stop_rx) = pw::channel::channel::<()>();
+        let f = frame.clone();
+        let thread = std::thread::Builder::new()
+            .name("pipewire".into())
+            .spawn(move || {
+                if let Err(e) = run_stream(fd, node, f, stop_rx) {
+                    log::warn!(target: "lightsnap", "pipewire: {e}");
+                }
+            })
+            .map_err(|e| e.to_string())?;
+        sources.push(Source { frame, stop, thread: Some(thread), rect });
+    }
+    let frames: Vec<_> = sources.iter().map(|s| s.frame.clone()).collect();
     CLOSED_AT_SEQ.store(0, Ordering::Relaxed);
-    *CAST.lock().map_err(|e| e.to_string())? = Some(Cast { session, frame: frame.clone(), stop, thread: Some(thread), position });
+    *CAST.lock().map_err(|e| e.to_string())? = Some(Cast { session, sources });
     // The compositor sends a frame right away.
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
-        if frame.lock().map(|f| f.is_some()).unwrap_or(false) {
+        if frames.iter().all(|f| f.lock().map(|f| f.is_some()).unwrap_or(false)) {
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(20));
     }
     end_screen_session();
-    Err("the shared screen sent no picture".into())
+    Err("a shared screen sent no picture".into())
 }
 
 /// Stops sharing the screen. Safe to call when nothing is shared.
 pub fn end_screen_session() {
     let cast = CAST.lock().ok().and_then(|mut c| c.take());
     if let Some(mut c) = cast {
-        let _ = c.stop.send(());
-        if let Some(t) = c.thread.take() {
-            let _ = t.join();
+        for s in &mut c.sources {
+            let _ = s.stop.send(());
+            if let Some(t) = s.thread.take() {
+                let _ = t.join();
+            }
         }
         let _ = pollster::block_on(c.session.close());
     }
@@ -142,20 +168,103 @@ pub fn end_screen_session() {
 /// selection.
 pub fn main_window_open(open: bool) {
     if !open {
-        CLOSED_AT_SEQ.store(latest_frame().map(|f| f.seq).unwrap_or(0), Ordering::Relaxed);
+        CLOSED_AT_SEQ.store(SEQ.load(Ordering::Relaxed), Ordering::Relaxed);
     }
     WINDOW_OPEN.store(open, Ordering::Relaxed);
 }
 
-/// Where the shared screen sits on the desktop, if a screen is shared.
-pub(super) fn shared_screen_position() -> Option<(i32, i32)> {
-    CAST.lock().ok()?.as_ref()?.position
+/// What the shared streams show, in points on the desktop. Empty while nothing is shared,
+/// and when the portal did not say (then the one stream is the first screen).
+pub(super) fn shared_rects() -> Vec<egui::Rect> {
+    let Ok(cast) = CAST.lock() else { return Vec::new() };
+    let Some(c) = cast.as_ref() else { return Vec::new() };
+    c.sources
+        .iter()
+        .filter_map(|s| s.rect)
+        .map(|(x, y, w, h)| egui::Rect::from_min_size(egui::pos2(x as f32, y as f32), egui::vec2(w as f32, h as f32)))
+        .collect()
 }
 
-fn latest_frame() -> Option<Frame> {
+fn latest_frame(source: usize) -> Option<Frame> {
     let cast = CAST.lock().ok()?;
-    let f = cast.as_ref()?.frame.lock().ok()?.clone();
+    let f = cast.as_ref()?.sources.get(source)?.frame.lock().ok()?.clone();
     f
+}
+
+/// The pixels of a screen inside one stream's frames.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Cut {
+    source: usize,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+}
+
+/// Where the screen `bounds` (points) is in the shared streams, if one shows it.
+/// `screens` are all screens, as `displays()` lists them.
+fn locate(bounds: egui::Rect, screens: &[crate::platform::Display]) -> Option<Cut> {
+    let desktop = screens.iter().fold(egui::Rect::NOTHING, |a, d| a.union(d.bounds));
+    let rects: Vec<Option<egui::Rect>> = {
+        let cast = CAST.lock().ok()?;
+        let c = cast.as_ref()?;
+        c.sources
+            .iter()
+            .map(|s| s.rect.map(|(x, y, w, h)| egui::Rect::from_min_size(egui::pos2(x as f32, y as f32), egui::vec2(w as f32, h as f32))))
+            .collect()
+    };
+    for (i, r) in rects.iter().enumerate() {
+        let f = latest_frame(i)?;
+        let r = match r {
+            Some(r) => *r,
+            // Without a position from the portal: a stream shaped like the whole desktop is
+            // the whole desktop (KDE's "full workspace"); else the only stream is the first screen.
+            None => {
+                let ratio = f.width as f32 / f.height.max(1) as f32;
+                let fits = |r: egui::Rect| r.height() > 0.0 && (r.width() / r.height() - ratio).abs() < 0.01;
+                if fits(desktop) {
+                    desktop
+                } else if rects.len() == 1 && screens.first().is_some_and(|d| d.bounds == bounds) {
+                    bounds
+                } else {
+                    continue;
+                }
+            }
+        };
+        if let Some(cut) = cut_in(bounds, r, f.width, f.height) {
+            return Some(Cut { source: i, ..cut });
+        }
+    }
+    None
+}
+
+/// The pixels of `bounds` in a stream that shows `stream` (points) as `fw` × `fh` pixels.
+fn cut_in(bounds: egui::Rect, stream: egui::Rect, fw: u32, fh: u32) -> Option<Cut> {
+    if !stream.expand(1.0).contains_rect(bounds) || stream.width() < 1.0 {
+        return None;
+    }
+    let s = fw as f32 / stream.width();
+    let px = |v: f32, max: u32| (v * s).round().clamp(0.0, max as f32) as u32;
+    let (x, y) = (px(bounds.min.x - stream.min.x, fw), px(bounds.min.y - stream.min.y, fh));
+    let (w, h) = (px(bounds.width(), fw - x), px(bounds.height(), fh - y));
+    (w > 0 && h > 0).then_some(Cut { source: 0, x, y, w, h })
+}
+
+/// The cut's rows out of a frame, packed.
+fn cut_rows(f: &Frame, c: Cut) -> Option<Vec<u8>> {
+    if c.x + c.w > f.width || c.y + c.h > f.height {
+        return None;
+    }
+    if c.x == 0 && c.y == 0 && c.w == f.width && c.h == f.height {
+        return Some((*f.data).clone());
+    }
+    let row = f.width as usize * 4;
+    let mut out = Vec::with_capacity(c.w as usize * c.h as usize * 4);
+    for y in c.y..c.y + c.h {
+        let start = y as usize * row + c.x as usize * 4;
+        out.extend_from_slice(&f.data[start..start + c.w as usize * 4]);
+    }
+    Some(out)
 }
 
 /// The PipeWire side: connect to the portal's remote and keep the newest frame.
@@ -172,7 +281,6 @@ fn run_stream(fd: OwnedFd, node: u32, frame: Arc<Mutex<Option<Frame>>>, stop: pw
     struct Format {
         info: spa::param::video::VideoInfoRaw,
     }
-    let mut seq = 0u64;
     let stream = pw::stream::StreamBox::new(
         &core,
         "lightsnap-screen",
@@ -193,7 +301,7 @@ fn run_stream(fd: OwnedFd, node: u32, frame: Arc<Mutex<Option<Frame>>>, stop: pw
             let _ = fmt.info.parse(param);
         })
         .process(move |stream, fmt| {
-            seq += 1;
+            let seq = SEQ.fetch_add(1, Ordering::Relaxed) + 1;
             let Some(mut buffer) = stream.dequeue_buffer() else { return };
             let datas = buffer.datas_mut();
             let Some(d) = datas.first_mut() else { return };
@@ -283,31 +391,39 @@ fn run_stream(fd: OwnedFd, node: u32, frame: Arc<Mutex<Option<Frame>>>, stop: pw
 
 // ---------------------------------------------------------------- the still picture
 
-/// Shares a screen and saves its first frame, for choosing the record area. The
-/// screen stays shared for the recording (see `end_screen_session`).
+/// Shares the screens and saves a picture of each, for choosing the area. The pictures
+/// are in the order of `displays()`, which lists the shared screens first. The screens
+/// stay shared for the recording (see `end_screen_session`).
 pub fn capture_all_screens(_count: usize, cursor: bool) -> Vec<PathBuf> {
     if let Err(e) = start_cast(cursor) {
         log::warn!(target: "lightsnap", "screen cast: {e}");
         return Vec::new();
     }
-    let Some(f) = latest_frame() else { return Vec::new() };
-    let mut rgba = (*f.data).clone();
-    if f.pix_fmt.starts_with("bgr") {
-        for px in rgba.chunks_exact_mut(4) {
-            px.swap(0, 2);
+    let mut out = Vec::new();
+    let screens = super::displays();
+    for (i, d) in screens.iter().enumerate() {
+        let Some(cut) = locate(d.bounds, &screens) else { break };
+        let Some(f) = latest_frame(cut.source) else { break };
+        log::info!(target: "lightsnap", "screen {i} at {:?}: {cut:?} of a {}x{} frame", d.bounds, f.width, f.height);
+        let Some(mut rgba) = cut_rows(&f, cut) else { break };
+        if f.pix_fmt.starts_with("bgr") {
+            for px in rgba.chunks_exact_mut(4) {
+                px.swap(0, 2);
+            }
         }
-    }
-    if f.pix_fmt.ends_with('0') {
-        for px in rgba.chunks_exact_mut(4) {
-            px[3] = 255;
+        if f.pix_fmt.ends_with('0') {
+            for px in rgba.chunks_exact_mut(4) {
+                px[3] = 255;
+            }
         }
+        let Some(img) = image::RgbaImage::from_raw(cut.w, cut.h, rgba) else { break };
+        let path = temp_file(&format!("screen{i}"), "png");
+        if img.save(&path).is_err() {
+            break;
+        }
+        out.push(path);
     }
-    let Some(img) = image::RgbaImage::from_raw(f.width, f.height, rgba) else { return Vec::new() };
-    let out = temp_file("screen0", "png");
-    match img.save(&out) {
-        Ok(()) => vec![out],
-        Err(_) => Vec::new(),
-    }
+    out
 }
 
 // ---------------------------------------------------------------- ffmpeg
@@ -322,10 +438,10 @@ pub fn ffmpeg_candidates() -> Vec<PathBuf> {
     candidates
 }
 
-/// The screen being shared is input 0; microphones come from PulseAudio (or PipeWire's
-/// Pulse server).
+/// Screen N of `displays()` is input N (see `ffmpeg_input_args`); microphones come from
+/// PulseAudio (or PipeWire's Pulse server).
 pub fn list_devices(ffmpeg: &Path) -> Devices {
-    let mut devices = Devices { screen_index: Some(0), screens: vec![(0, 0)], audio_inputs: Vec::new() };
+    let mut devices = Devices { screen_index: Some(0), screens: (0..16).map(|i| (i, i)).collect(), audio_inputs: Vec::new() };
     let Ok(out) = Command::new(ffmpeg).args(["-hide_banner", "-sources", "pulse"]).output() else { return devices };
     // Lines look like: "* alsa_input.pci-0000_00_1f.3.analog-stereo [Built-in Audio Analog Stereo] (audio)"
     let mut map = Vec::new();
@@ -367,10 +483,13 @@ pub fn sound_output_args() -> Vec<String> {
         .collect()
 }
 
-/// ffmpeg arguments for the shared screen (and microphone), up to and including `-i`.
-/// Starts a writer that feeds the screen into a named pipe for this ffmpeg run.
-pub fn ffmpeg_input_args(_screen_index: usize, audio: Option<&str>, fps: u32, _cursor: bool, _clicks: bool) -> Vec<String> {
-    let Some(first) = latest_frame() else {
+/// ffmpeg arguments for screen `screen_index` of `displays()` (and the microphone), up to
+/// and including `-i`. Starts a writer that feeds the screen into a named pipe for this
+/// ffmpeg run.
+pub fn ffmpeg_input_args(screen_index: usize, audio: Option<&str>, fps: u32, _cursor: bool, _clicks: bool) -> Vec<String> {
+    let screens = super::displays();
+    let cut = screens.get(screen_index).and_then(|d| locate(d.bounds, &screens));
+    let (Some(cut), Some(first)) = (cut, cut.and_then(|c| latest_frame(c.source))) else {
         // Nothing shared: let ffmpeg fail with a readable message.
         return vec!["-f".into(), "lavfi".into(), "-i".into(), "nullsrc=d=0:s=2x2".into(), "-frames:v".into(), "0".into()];
     };
@@ -381,8 +500,9 @@ pub fn ffmpeg_input_args(_screen_index: usize, audio: Option<&str>, fps: u32, _c
     }
     let fps = fps.clamp(1, 60);
     let f2 = fifo.clone();
-    let (w, h) = (first.width, first.height);
-    std::thread::spawn(move || feed(&f2, w, h, fps));
+    let (fw, fh) = (first.width, first.height);
+    let (w, h) = (cut.w, cut.h);
+    std::thread::spawn(move || feed(&f2, cut, fw, fh, fps));
     let mut args: Vec<String> = [
         "-f",
         "rawvideo",
@@ -411,9 +531,10 @@ pub fn ffmpeg_input_args(_screen_index: usize, audio: Option<&str>, fps: u32, _c
     args
 }
 
-/// Writes the newest frame into the pipe `fps` times a second until ffmpeg stops
-/// reading. Frames of another size (the screen changed) are skipped.
-fn feed(fifo: &Path, w: u32, h: u32, fps: u32) {
+/// Writes the screen `cut` out of its stream's newest frame into the pipe `fps` times a
+/// second until ffmpeg stops reading. Frames of another size than `fw` × `fh` (the screen
+/// changed) are skipped.
+fn feed(fifo: &Path, cut: Cut, fw: u32, fh: u32, fps: u32) {
     use std::os::unix::fs::OpenOptionsExt;
     // Opening a pipe for writing waits for the reader; poll so a failed ffmpeg can't hang us.
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -442,7 +563,7 @@ fn feed(fifo: &Path, w: u32, h: u32, fps: u32) {
     let wait_until = Instant::now() + Duration::from_secs(2);
     let window_gone = || {
         !WINDOW_OPEN.load(Ordering::Relaxed)
-            && latest_frame().is_some_and(|f| f.seq > CLOSED_AT_SEQ.load(Ordering::Relaxed))
+            && latest_frame(cut.source).is_some_and(|f| f.seq > CLOSED_AT_SEQ.load(Ordering::Relaxed))
     };
     while Instant::now() < wait_until && !window_gone() {
         std::thread::sleep(Duration::from_millis(10));
@@ -450,10 +571,12 @@ fn feed(fifo: &Path, w: u32, h: u32, fps: u32) {
     let period = Duration::from_secs_f64(1.0 / fps as f64);
     let mut next = Instant::now();
     let mut last: Option<Arc<Vec<u8>>> = None;
+    let mut last_seq = 0;
     loop {
-        if let Some(f) = latest_frame() {
-            if f.width == w && f.height == h {
-                last = Some(f.data);
+        if let Some(f) = latest_frame(cut.source) {
+            if f.width == fw && f.height == fh && f.seq != last_seq {
+                last_seq = f.seq;
+                last = cut_rows(&f, cut).map(Arc::new);
             }
         }
         let Some(data) = &last else { break };
@@ -482,4 +605,35 @@ pub const FALLBACK_EXT: &str = "mp4";
 
 pub fn stop_fallback(child: &mut Child) {
     let _ = child.kill();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::{Rect, pos2, vec2};
+
+    fn r(x: f32, y: f32, w: f32, h: f32) -> Rect {
+        Rect::from_min_size(pos2(x, y), vec2(w, h))
+    }
+
+    #[test]
+    fn screens_are_found_in_their_stream() {
+        // One stream per screen: the whole frame.
+        let c = cut_in(r(1920.0, 0.0, 1920.0, 1080.0), r(1920.0, 0.0, 1920.0, 1080.0), 1920, 1080).unwrap();
+        assert_eq!((c.x, c.y, c.w, c.h), (0, 0, 1920, 1080));
+        // KDE's whole desktop as one stream, at 2x: the right screen is the right half.
+        let c = cut_in(r(1920.0, 0.0, 1920.0, 1080.0), r(0.0, 0.0, 3840.0, 1080.0), 7680, 2160).unwrap();
+        assert_eq!((c.x, c.y, c.w, c.h), (3840, 0, 3840, 2160));
+        // A stream of another screen does not show it.
+        assert!(cut_in(r(1920.0, 0.0, 1920.0, 1080.0), r(0.0, 0.0, 1920.0, 1080.0), 1920, 1080).is_none());
+    }
+
+    #[test]
+    fn cut_rows_takes_the_screen_out_of_the_frame() {
+        // 4 x 2 frame, each pixel's first byte is its x; cut the right half.
+        let data: Vec<u8> = (0..2).flat_map(|_| (0..4u8).flat_map(|x| [x, 0, 0, 255])).collect();
+        let f = Frame { width: 4, height: 2, pix_fmt: "rgba", data: Arc::new(data), seq: 1 };
+        let rows = cut_rows(&f, Cut { source: 0, x: 2, y: 0, w: 2, h: 2 }).unwrap();
+        assert_eq!(rows.chunks(4).map(|p| p[0]).collect::<Vec<_>>(), vec![2, 3, 2, 3]);
+    }
 }
