@@ -104,9 +104,7 @@ Plasma.
 Wayland lets no app read the screen or catch keys on its own, so LightSnap asks the desktop
 through its portals. Your desktop asks you once for each:
 
-- **Screenshots**: full-screen and timed captures. GNOME can ask only while LightSnap's window
-  is in front, so LightSnap shows a note with an **Allow…** button.
-- **Screen sharing**: for recordings and area screenshots. Choose all your screens (on KDE
+- **Screen sharing**: for screenshots and recordings. Choose all your screens (on KDE
   the tiles, or **Share full Workspace**) and keep **Remember this selection**. The desktop
   asks again when your screens change.
 - **Global shortcuts**: confirm the keys. To change them later, use your desktop's settings
@@ -115,8 +113,9 @@ through its portals. Your desktop asks you once for each:
 Capture Area works as on macOS: the screen freezes, you drag a frame, and when you let go
 the picture is taken (and copied). No button, no Enter. With several screens the area is
 chosen on the screen the desktop opens LightSnap on, usually the one with the mouse; a frame
-can't reach across two screens. Capture Window uses
-your desktop's own picker. While recording,
+can't reach across two screens. Capture Fullscreen and Timed Capture take that whole
+screen. Capture Window uses your desktop's own picker (GNOME may ask once whether
+LightSnap may take screenshots). While recording,
 LightSnap has no window: stop or pause it from the tray icon or with the shortcut. On KDE
 Plasma, Sway, Hyprland and COSMIC a red frame shows the recorded area, as on macOS (orange
 while paused), and the recording starts right away. GNOME does not let apps draw such a

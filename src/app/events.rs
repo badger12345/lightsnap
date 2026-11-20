@@ -327,17 +327,15 @@ impl LightSnap {
                     (Some(_), true) if select_shot => {
                         let screens = self.sel_screens(&res);
                         let previous = if kind == CaptureKind::Previous { self.last_area } else { None };
+                        // Without choosing: the previous area again, or the whole screen.
+                        let instant = match kind {
+                            CaptureKind::FullScreen | CaptureKind::Timed(_) => Some((Instant::now(), None)),
+                            _ => previous.map(|r| (Instant::now(), Some(r))),
+                        };
                         if screens.is_empty() {
                             platform::end_screen_session();
                             self.show_window(ctx);
                             self.toast(format!("Could not read the screen. {}", platform::SCREEN_PERMISSION_HINT), None);
-                        } else if let Some(r) = previous {
-                            // The same area again, without choosing.
-                            platform::end_screen_session();
-                            match capture::crop_screens(&screens, r) {
-                                Some(p) => self.handle_capture(ctx, p, show_after),
-                                None => self.toast("Could not read the screen.", None),
-                            }
                         } else {
                             self.select = Some(Select {
                                 screens,
@@ -351,6 +349,7 @@ impl LightSnap {
                                 shot: Some(show_after),
                                 placed: false,
                                 shown: 0,
+                                instant,
                             });
                             ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
                         }
@@ -380,6 +379,7 @@ impl LightSnap {
                                 shot: None,
                                 placed: false,
                                 shown: 0,
+                                instant: None,
                             });
                             ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
                         }

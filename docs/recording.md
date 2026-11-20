@@ -139,7 +139,11 @@ quality settings). Linux cannot record without ffmpeg.
 - **Area screenshots use the same selection.** The screen's frozen picture, without
   the mouse pointer; the picture is taken when the mouse is let go, as with
   `screencapture -i` on macOS. The desktop's own pickers ask for an extra click (GNOME) or
-  offer no area at all (KDE). The screen is shared only while choosing.
+  offer no area at all (KDE). The screen is shared only while choosing. Full-screen and
+  timed captures open the same window and take the whole screen at once, undimmed, as soon
+  as the window has the keyboard focus: on GNOME only a focused window can set the
+  clipboard without XWayland (`wl_clipboard.rs`). The shortcut portal's activation token
+  is handed to the window (`XDG_ACTIVATION_TOKEN`), so GNOME gives it the focus.
 - **The red frame is four layer surfaces outside the area.** The wlr-layer-shell protocol
   lets a surface sit at a fixed place above all windows, without taking clicks or keys.
   KDE Plasma, Sway, Hyprland and COSMIC support it. GNOME does not, and gets no frame:

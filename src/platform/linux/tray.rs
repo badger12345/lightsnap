@@ -98,6 +98,12 @@ fn build(entries: &[MenuEntry]) -> Vec<ksni::MenuItem<Sni>> {
                     enabled: *enabled,
                     shortcut: key.as_ref().map(|k| vec![shortcut_parts(k)]).unwrap_or_default(),
                     activate: Box::new(move |t: &mut Sni| {
+                        // The tray host may hand over the right to bring a window to the front.
+                        let tok = ksni::current_xdg_activation_token();
+                        log::debug!(target: "lightsnap", "tray item {id}, activation token: {}", tok.is_some());
+                        if let (Some(tok), Ok(mut slot)) = (tok, ACTIVATION.lock()) {
+                            *slot = Some((tok, std::time::Instant::now()));
+                        }
                         if !id.is_empty() {
                             (t.sink)(id.clone());
                         }
@@ -124,6 +130,16 @@ fn shortcut_parts(k: &Hotkey) -> Vec<String> {
     }
     v.push(keysym(&k.code));
     v
+}
+
+/// The activation token of the newest shortcut press, if the desktop sent one.
+static ACTIVATION: Mutex<Option<(String, std::time::Instant)>> = Mutex::new(None);
+
+/// The token of a shortcut pressed in the last seconds, once. A window opened with it gets
+/// the focus; without one GNOME opens new windows behind or without the keyboard.
+pub fn take_activation_token() -> Option<String> {
+    let (t, at) = ACTIVATION.lock().ok()?.take()?;
+    (at.elapsed() < std::time::Duration::from_secs(10)).then_some(t)
 }
 
 pub struct Tray(Handle<Sni>);
@@ -284,6 +300,12 @@ async fn run(rx: std::sync::mpsc::Receiver<Cmd>, shared: Shared) {
                 let Ok(mut stream) = p.receive_activated().await else { return };
                 while let Some(ev) = stream.next().await {
                     let id = ev.shortcut_id().to_string();
+                    // The desktop may hand over the right to bring a window to the front.
+                    let token = ev.options().get("activation_token").and_then(|v| <&str>::try_from(&**v).ok().map(str::to_string));
+                    log::debug!(target: "lightsnap", "shortcut {id}, activation token: {}", token.is_some());
+                    if let (Some(t), Ok(mut slot)) = (token, ACTIVATION.lock()) {
+                        *slot = Some((t, std::time::Instant::now()));
+                    }
                     let known = sh.live.lock().map(|l| l.as_ref().is_some_and(|m| m.contains_key(&id))).unwrap_or(false);
                     if known && !sh.muted.load(Ordering::SeqCst) {
                         (sh.sink)(id);

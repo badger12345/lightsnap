@@ -41,6 +41,15 @@ struct Attached {
 }
 
 static ATTACHED: Mutex<Option<Attached>> = Mutex::new(None);
+/// A surface of LightSnap has the keyboard focus (as the compositor last said).
+static FOCUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether copying can work now: the desktop needs no focus for it (data-control), or
+/// LightSnap has the focus.
+pub fn ready() -> bool {
+    let needs_focus = ATTACHED.lock().ok().is_some_and(|g| g.as_ref().is_some_and(|a| !a.data_control));
+    !needs_focus || FOCUSED.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 /// Starts listening on the main window's Wayland connection. Called every frame; does
 /// work only the first time (eframe keeps one connection for the whole run).
@@ -126,7 +135,8 @@ fn run(conn: Connection, rx: mpsc::Receiver<Request>, ready: &mpsc::SyncSender<O
     loop {
         while let Ok(req) = rx.try_recv() {
             // Take in input events that winit read already, so the serial is current.
-            let _ = queue.roundtrip(&mut st);
+            let rt = queue.roundtrip(&mut st);
+            log::debug!(target: "lightsnap", "clipboard request: focused {} serial {:?} roundtrip {:?}", st.focused, st.serial, rt.is_ok());
             let ok = match (st.focused, st.serial, &st.device) {
                 (true, Some(serial), Some(device)) => {
                     let source = manager.create_data_source(&qh, ());
@@ -180,12 +190,32 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
 
 impl Dispatch<wl_seat::WlSeat, ()> for State {
     fn event(st: &mut Self, seat: &wl_seat::WlSeat, ev: wl_seat::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>) {
+        // Keyboards and mice come and go (unplugged, a remote session ends). A gone device's
+        // object gets no events any more: drop it, and make a new one when one is back.
         if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(caps) } = ev {
-            if caps.contains(wl_seat::Capability::Keyboard) && st.keyboard.is_none() {
-                st.keyboard = Some(seat.get_keyboard(qh, ()));
+            match (caps.contains(wl_seat::Capability::Keyboard), st.keyboard.is_some()) {
+                (true, false) => st.keyboard = Some(seat.get_keyboard(qh, ())),
+                (false, true) => {
+                    if let Some(k) = st.keyboard.take() {
+                        if k.version() >= 3 {
+                            k.release();
+                        }
+                    }
+                    st.focused = false;
+                    FOCUSED.store(false, std::sync::atomic::Ordering::Relaxed);
+                }
+                _ => {}
             }
-            if caps.contains(wl_seat::Capability::Pointer) && st.pointer.is_none() {
-                st.pointer = Some(seat.get_pointer(qh, ()));
+            match (caps.contains(wl_seat::Capability::Pointer), st.pointer.is_some()) {
+                (true, false) => st.pointer = Some(seat.get_pointer(qh, ())),
+                (false, true) => {
+                    if let Some(p) = st.pointer.take() {
+                        if p.version() >= 3 {
+                            p.release();
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -195,10 +225,16 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
     fn event(st: &mut Self, _: &wl_keyboard::WlKeyboard, ev: wl_keyboard::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
         match ev {
             wl_keyboard::Event::Enter { serial, .. } => {
+                log::debug!(target: "lightsnap", "clipboard: keyboard enter {serial}");
                 st.focused = true;
+                FOCUSED.store(true, std::sync::atomic::Ordering::Relaxed);
                 st.serial = Some(serial);
             }
-            wl_keyboard::Event::Leave { .. } => st.focused = false,
+            wl_keyboard::Event::Leave { .. } => {
+                log::debug!(target: "lightsnap", "clipboard: keyboard leave");
+                st.focused = false;
+                FOCUSED.store(false, std::sync::atomic::Ordering::Relaxed);
+            }
             wl_keyboard::Event::Key { serial, .. } => st.serial = Some(serial),
             // The keymap's fd is closed when the event is dropped.
             _ => {}

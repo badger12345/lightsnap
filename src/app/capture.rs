@@ -52,6 +52,10 @@ pub(super) struct Select {
     pub(super) placed: bool,
     /// Linux: the screen whose picture the full-screen main window shows (index in `screens`).
     pub(super) shown: usize,
+    /// Linux: take the picture without choosing, as soon as the window has the focus (it
+    /// needs the focus to set the clipboard on GNOME). The area, or the whole screen the
+    /// window is on. The window shows the frozen picture undimmed, so it is not seen.
+    pub(super) instant: Option<(Instant, Option<Rect>)>,
 }
 
 /// Linux: how long the chosen area is shown before the recording starts.
@@ -177,8 +181,12 @@ impl LightSnap {
         self.hide_window(ctx);
         // Linux: an area is chosen in LightSnap itself, on a frozen picture of the screen, as
         // for recordings. The desktop's own pickers ask for an extra click (GNOME) or offer
-        // no area at all (KDE).
-        let select_shot = cfg!(target_os = "linux") && !for_record && matches!(kind, CaptureKind::Area | CaptureKind::Previous);
+        // no area at all (KDE). Full-screen and timed captures go the same way, with a window
+        // that takes the picture at once: on GNOME only a focused window can set the
+        // clipboard without XWayland.
+        let select_shot = cfg!(target_os = "linux")
+            && !for_record
+            && matches!(kind, CaptureKind::Area | CaptureKind::Previous | CaptureKind::FullScreen | CaptureKind::Timed(_));
         if for_record {
             if let Some(ff) = self.ffmpeg.clone() {
                 let slot = self.devices.clone();
@@ -197,6 +205,9 @@ impl LightSnap {
         std::thread::spawn(move || {
             if was_visible {
                 std::thread::sleep(Duration::from_millis(350));
+            }
+            if let (true, CaptureKind::Timed(s)) = (select_shot, kind) {
+                std::thread::sleep(Duration::from_secs(s as u64));
             }
             let r = if for_record || select_shot {
                 // A frozen picture of every screen to choose the area on. Screenshots leave
@@ -306,7 +317,8 @@ impl LightSnap {
         let settings = &mut self.settings;
         let devices = &self.devices;
         let has_ff = self.ffmpeg.is_some();
-        let Select { screens, rect, before_full, drag, settings_open, focused, countdown, shot, shown, .. } = sel;
+        let Select { screens, rect, before_full, drag, settings_open, focused, countdown, shot, shown, instant, placed, .. } = sel;
+        let (instant, placed) = (*instant, *placed);
         let shown = *shown;
         let shot_mode = shot.is_some();
         let all = screens.iter().fold(Rect::NOTHING, |a, s| a.union(s.bounds));
@@ -360,6 +372,19 @@ impl LightSnap {
                     painter.image(t.id(), screen_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
                 } else {
                     painter.rect_filled(full, 0.0, Color32::from_gray(30));
+                }
+                if let Some((t0, area)) = instant {
+                    // Wait until the window is on its screen and has the focus (or not much
+                    // longer: a desktop may never give it).
+                    #[cfg(target_os = "linux")]
+                    let focused = platform::clipboard_ready();
+                    #[cfg(not(target_os = "linux"))]
+                    let focused = true;
+                    if placed && (focused || t0.elapsed() > Duration::from_millis(800)) {
+                        return SelectOut::Shot(area.unwrap_or(scr.bounds));
+                    }
+                    ctx.request_repaint_after(Duration::from_millis(20));
+                    return SelectOut::None;
                 }
                 let to_local = |r: Rect| r.translate(-offset);
                 if let (Some(t0), Some(r)) = (*countdown, *rect) {

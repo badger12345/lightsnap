@@ -666,11 +666,15 @@ impl eframe::App for LightSnap {
                 let sel = self.select.take();
                 platform::end_screen_session();
                 let show_after = sel.as_ref().and_then(|s| s.shot).unwrap_or(false);
+                // A full-screen capture is not an area to repeat with "Capture Previous Area".
+                let chosen = !sel.as_ref().is_some_and(|s| matches!(s.instant, Some((_, None))));
                 let path = sel.as_ref().and_then(|s| capture::crop_screens(&s.screens, r));
                 self.visible = false;
                 match path {
                     Some(p) => {
-                        self.last_area = Some(r);
+                        if chosen {
+                            self.last_area = Some(r);
+                        }
                         self.handle_capture(&ctx, p, show_after);
                     }
                     None => {

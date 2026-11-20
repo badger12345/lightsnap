@@ -125,6 +125,12 @@ fn run_linux(
             let st = state.clone();
             let reattach = !first;
             platform::main_window_open(true);
+            if let Some(token) = platform::take_activation_token() {
+                // egui-winit hands it to the new window and removes the variable again.
+                // SAFETY: set right before the window is made; no other thread of
+                // LightSnap reads this variable.
+                unsafe { std::env::set_var("XDG_ACTIVATION_TOKEN", token) };
+            }
             let result = eframe::run_native_ext(
                 "LightSnap",
                 options,

@@ -23,6 +23,6 @@ pub use rec_frame::*;
 pub use recording::*;
 pub use system::*;
 pub use tray::*;
-pub use wl_clipboard::attach as attach_clipboard;
+pub use wl_clipboard::{attach as attach_clipboard, ready as clipboard_ready};
 
 use super::{APP_ID, OLD_APP_ID};
