@@ -35,7 +35,14 @@ pub(super) fn video_options(ui: &mut Ui, s: &mut Settings, devices: &Arc<Mutex<O
             });
     });
     changed |= ui.checkbox(&mut s.capture_cursor, "Capture mouse cursor").changed();
-    changed |= ui.checkbox(&mut s.capture_clicks, "Capture mouse clicks").changed();
+    if cfg!(target_os = "linux") {
+        // Wayland tells no app about clicks in other apps' windows.
+        let mut off = false;
+        ui.add_enabled(false, egui::Checkbox::new(&mut off, "Capture mouse clicks"))
+            .on_disabled_hover_text("Not on Linux: Wayland tells no app about clicks in other windows.");
+    } else {
+        changed |= ui.checkbox(&mut s.capture_clicks, "Capture mouse clicks").changed();
+    }
     ui.label("Audio input:");
     let inputs = devices.lock().ok().and_then(|d| d.as_ref().map(|d| d.audio_inputs.clone())).unwrap_or_default();
     let current = s.audio.clone().unwrap_or_else(|| "Do Not Record Audio".into());

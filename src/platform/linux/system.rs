@@ -218,3 +218,31 @@ pub fn set_login_item(on: bool) {
     }
     let _ = std::fs::write(&path, body);
 }
+
+/// Plays the desktop's camera shutter sound, as `screencapture` does on macOS. The sound
+/// comes from the installed sound themes (freedesktop's is on GNOME and KDE); it plays
+/// through PipeWire or PulseAudio. Nothing happens when neither is there.
+pub fn play_capture_sound() {
+    let mut dirs: Vec<std::path::PathBuf> = dirs::data_dir().into_iter().collect();
+    let sys = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
+    dirs.extend(std::env::split_paths(&sys));
+    let file = dirs
+        .iter()
+        .flat_map(|d| ["freedesktop", "ocean", "oxygen", "Yaru"].map(|t| d.join("sounds").join(t).join("stereo")))
+        .flat_map(|d| ["oga", "ogg", "wav"].map(|e| d.join(format!("camera-shutter.{e}"))))
+        .find(|p| p.is_file());
+    let Some(file) = file else { return };
+    std::thread::spawn(move || {
+        for player in ["/usr/bin/pw-play", "/usr/bin/paplay"] {
+            if let Ok(mut child) = std::process::Command::new(player)
+                .arg(&file)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                let _ = child.wait();
+                return;
+            }
+        }
+    });
+}

@@ -492,7 +492,7 @@ impl LightSnap {
                     let paused = r.rec.is_paused();
                     #[cfg(target_os = "linux")]
                     if let Some(f) = &r.frame {
-                        f.set_paused(paused);
+                        f.set_status(&record::format_elapsed(r.rec.elapsed()), paused);
                     }
                     let title = format!("{}{}", if paused { "❚❚ " } else { "" }, record::format_elapsed(r.rec.elapsed()));
                     if let Some(t) = &self.tray {
@@ -501,6 +501,17 @@ impl LightSnap {
                 }
                 ctx.request_repaint_after(Duration::from_millis(500));
             }
+        }
+
+        // Linux (KDE): a click on the control bar below the recorded area.
+        #[cfg(target_os = "linux")]
+        if let Some(a) = self.recording.as_ref().and_then(|r| r.frame.as_ref()).and_then(|f| f.take_action()) {
+            let action = match a {
+                platform::BarAction::Pause => Action::PauseRec,
+                platform::BarAction::Stop => Action::FinishRec,
+                platform::BarAction::Cancel => Action::CancelRec,
+            };
+            self.run_action(ctx, action);
         }
     }
 }

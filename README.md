@@ -119,8 +119,10 @@ highlighted, a click takes it. Other desktops don't tell apps where windows are,
 Capture Window uses the desktop's own picker (GNOME may ask once whether LightSnap may take
 screenshots). While recording,
 LightSnap has no window: stop or pause it from the tray icon or with the shortcut. On KDE
-Plasma, Sway, Hyprland and COSMIC a red frame shows the recorded area, as on macOS (orange
-while paused), and the recording starts right away. GNOME does not let apps draw such a
+Plasma, Sway, Hyprland and COSMIC a red frame shows the recorded area and a control bar
+below it has the timer, Pause, Stop and Cancel, as on macOS (orange while paused); the
+recording starts right away. Wayland tells no app about clicks in other windows, so
+"Capture mouse clicks" is macOS only. GNOME does not let apps draw such a
 frame, so there a 3 s countdown shows the area first.
 
 Needs:

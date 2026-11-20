@@ -1,18 +1,23 @@
-//! The red frame around the record area while recording, as on macOS.
+//! The red frame around the record area and the control bar below it, as on macOS.
 //!
 //! A normal Wayland window can neither place itself nor stay on top. The wlr-layer-shell
 //! protocol can do both: KDE Plasma, Sway, Hyprland and COSMIC support it, GNOME does not.
-//! The frame is four thin bars just outside the area, each a layer surface on the
-//! overlay layer that takes no clicks and no keys. The recording crops to the area, so
-//! the bars are not in the video.
+//! The frame is four thin bars just outside the area, each a layer surface on the overlay
+//! layer that takes no clicks and no keys. The recording crops to the area, so the bars
+//! are not in the video. The control bar is one more layer surface that does take clicks:
+//! timer, Pause, Stop and Cancel, drawn here with tiny-skia and ab_glyph.
 //!
-//! The bars live on their own Wayland connection in their own thread. Without layer
-//! shell `RecFrame::show` returns `None`, and the recording runs without a frame.
+//! All surfaces live on their own Wayland connection in their own thread. Without layer
+//! shell `RecFrame::show` returns `None`, and the recording runs without frame and bar.
 
+use ab_glyph::{Font, FontRef, ScaleFont};
 use egui::{Rect, pos2, vec2};
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, Region};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
 use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
+use smithay_client_toolkit::seat::pointer::cursor_shape::CursorShapeManager;
+use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind, PointerHandler};
+use smithay_client_toolkit::seat::{Capability, SeatHandler, SeatState};
 use smithay_client_toolkit::shell::WaylandSurface;
 use smithay_client_toolkit::shell::wlr_layer::{
     Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface, LayerSurfaceConfigure,
@@ -20,15 +25,19 @@ use smithay_client_toolkit::shell::wlr_layer::{
 use smithay_client_toolkit::shm::slot::{Buffer, SlotPool};
 use smithay_client_toolkit::shm::{Shm, ShmHandler};
 use smithay_client_toolkit::{
-    delegate_compositor, delegate_layer, delegate_output, delegate_registry, delegate_shm, registry_handlers,
+    delegate_compositor, delegate_layer, delegate_output, delegate_pointer, delegate_registry, delegate_seat, delegate_shm,
+    registry_handlers,
 };
 use std::os::fd::AsRawFd;
 use std::sync::mpsc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 use wayland_client::globals::registry_queue_init;
-use wayland_client::protocol::{wl_output, wl_shm, wl_surface};
+use wayland_client::protocol::{wl_output, wl_pointer, wl_seat, wl_shm, wl_surface};
 use wayland_client::{Connection, QueueHandle};
+use smithay_client_toolkit::reexports::protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::{
+    Shape, WpCursorShapeDeviceV1,
+};
 
 /// Bar thickness and gap to the area, in points. The same as on macOS.
 const THICK: f32 = 3.0;
@@ -36,28 +45,45 @@ const GAP: f32 = 2.0;
 /// Red while recording, orange while paused (ARGB).
 const RED: u32 = 0xFF_E2_26_26;
 const ORANGE: u32 = 0xFF_FF_AA_00;
+/// The control bar, in points, as on macOS (app/capture.rs `recording_overlays`).
+const BAR_H: f32 = 40.0;
+const BTN_H: f32 = 26.0;
+const BTN_PAUSE_W: f32 = 36.0;
+const BTN_STOP_W: f32 = 62.0;
+const BTN_CANCEL_W: f32 = 58.0;
+
+/// A click on the control bar.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BarAction {
+    Pause,
+    Stop,
+    Cancel,
+}
 
 enum Cmd {
-    Paused(bool),
+    /// The timer text and whether the recording is paused.
+    Status(String, bool),
     Hide,
 }
 
-/// The frame on screen. Dropping it removes the frame.
+/// Frame and control bar on screen. Dropping it removes them.
 pub struct RecFrame {
     tx: mpsc::Sender<Cmd>,
+    actions: mpsc::Receiver<BarAction>,
     thread: Option<JoinHandle<()>>,
 }
 
 impl RecFrame {
-    /// Shows the frame around `area` (global points). `None` when the desktop has no
-    /// layer shell, or the area fills its screen (the frame would be off screen).
-    pub fn show(area: Rect) -> Option<RecFrame> {
+    /// Shows the frame around `area` (global points) and the control bar. `None` when the
+    /// desktop has no layer shell.
+    pub fn show(area: Rect, can_pause: bool) -> Option<RecFrame> {
         let (tx, rx) = mpsc::channel();
+        let (act_tx, actions) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let thread = std::thread::Builder::new()
             .name("rec-frame".into())
             .spawn(move || {
-                if let Err(e) = run(area, rx, &ready_tx) {
+                if let Err(e) = run(area, can_pause, rx, act_tx, &ready_tx) {
                     log::info!(target: "lightsnap", "no recording frame: {e}");
                     let _ = ready_tx.try_send(false);
                 }
@@ -65,16 +91,21 @@ impl RecFrame {
             .ok()?;
         // Setting up takes a few round trips to the compositor.
         if ready_rx.recv_timeout(Duration::from_secs(2)).unwrap_or(false) {
-            Some(RecFrame { tx, thread: Some(thread) })
+            Some(RecFrame { tx, actions, thread: Some(thread) })
         } else {
             let _ = tx.send(Cmd::Hide);
             None
         }
     }
 
-    /// Orange while paused, red while recording.
-    pub fn set_paused(&self, paused: bool) {
-        let _ = self.tx.send(Cmd::Paused(paused));
+    /// The timer on the bar; frame and dot turn orange while paused.
+    pub fn set_status(&self, elapsed: &str, paused: bool) {
+        let _ = self.tx.send(Cmd::Status(elapsed.to_string(), paused));
+    }
+
+    /// A button clicked on the bar since the last call.
+    pub fn take_action(&self) -> Option<BarAction> {
+        self.actions.try_recv().ok()
     }
 }
 
@@ -114,61 +145,286 @@ fn bars(area: Rect, screen: Rect) -> Vec<Rect> {
     .collect()
 }
 
-struct Bar {
+/// Where the control bar goes: below the area, or above it, or at the bottom of the screen.
+/// The same rule as on macOS.
+fn bar_rect(area: Rect, screen: Rect, can_pause: bool) -> Rect {
+    let size = vec2(if can_pause { 256.0 } else { 214.0 }, BAR_H);
+    let mut pos = pos2(area.center().x - size.x / 2.0, area.max.y + 12.0);
+    if pos.y + size.y > screen.max.y - 4.0 {
+        pos.y = area.min.y - size.y - 12.0;
+        if pos.y < screen.min.y + 30.0 {
+            pos.y = screen.max.y - size.y - 70.0;
+        }
+    }
+    pos.x = pos.x.clamp(screen.min.x + 4.0, (screen.max.x - size.x - 4.0).max(screen.min.x + 4.0));
+    Rect::from_min_size(pos, size)
+}
+
+/// The buttons of a bar `w` points wide, right to left as on macOS: Cancel, Pause, Stop.
+fn buttons(w: f32, can_pause: bool) -> Vec<(Rect, BarAction)> {
+    let y = (BAR_H - BTN_H) / 2.0;
+    let mut x = w - 8.0;
+    let mut out = Vec::new();
+    let mut add = |width: f32, a: BarAction, out: &mut Vec<(Rect, BarAction)>| {
+        x -= width;
+        out.push((Rect::from_min_size(pos2(x, y), vec2(width, BTN_H)), a));
+        x -= 6.0;
+    };
+    add(BTN_CANCEL_W, BarAction::Cancel, &mut out);
+    if can_pause {
+        add(BTN_PAUSE_W, BarAction::Pause, &mut out);
+    }
+    add(BTN_STOP_W, BarAction::Stop, &mut out);
+    out
+}
+
+struct Surface {
     layer: LayerSurface,
+    /// Size in points.
     size: (u32, u32),
     configured: bool,
     /// Kept until the next one is drawn, so the compositor can still read it.
     buffer: Option<Buffer>,
 }
 
+struct Bar {
+    surface: Surface,
+    /// Pixels per point of its screen (whole numbers: buffer scale).
+    scale: i32,
+    can_pause: bool,
+    elapsed: String,
+    hover: Option<BarAction>,
+}
+
 struct State {
     registry: RegistryState,
     outputs: OutputState,
+    seat: SeatState,
     shm: Shm,
     pool: Option<SlotPool>,
-    bars: Vec<Bar>,
-    color: u32,
+    frame: Vec<Surface>,
+    bar: Option<Bar>,
+    paused: bool,
     closed: bool,
+    pointer: Option<wl_pointer::WlPointer>,
+    cursor_shapes: Option<CursorShapeManager>,
+    cursor_device: Option<WpCursorShapeDeviceV1>,
+    actions: mpsc::Sender<BarAction>,
+    font: FontRef<'static>,
 }
 
 impl State {
-    fn draw(&mut self, i: usize) {
-        let color = self.color;
+    fn draw_frame(&mut self, i: usize) {
+        let color = if self.paused { ORANGE } else { RED };
         let Some(pool) = &mut self.pool else { return };
-        let bar = &mut self.bars[i];
-        if !bar.configured {
+        let s = &mut self.frame[i];
+        if !s.configured {
             return;
         }
-        let (w, h) = (bar.size.0 as i32, bar.size.1 as i32);
+        let (w, h) = (s.size.0 as i32, s.size.1 as i32);
         let Ok((buffer, canvas)) = pool.create_buffer(w, h, w * 4, wl_shm::Format::Argb8888) else { return };
         for px in canvas.chunks_exact_mut(4) {
             px.copy_from_slice(&color.to_le_bytes());
         }
-        let surface = bar.layer.wl_surface();
+        let surface = s.layer.wl_surface();
         surface.damage_buffer(0, 0, w, h);
         if buffer.attach_to(surface).is_ok() {
-            bar.layer.commit();
-            bar.buffer = Some(buffer);
+            s.layer.commit();
+            s.buffer = Some(buffer);
         }
+    }
+
+    fn draw_bar(&mut self) {
+        let paused = self.paused;
+        let font = self.font.clone();
+        let Some(pool) = &mut self.pool else { return };
+        let Some(bar) = &mut self.bar else { return };
+        if !bar.surface.configured {
+            return;
+        }
+        let sc = bar.scale.max(1);
+        let (w, h) = (bar.surface.size.0 as i32 * sc, bar.surface.size.1 as i32 * sc);
+        let Some(pm) = paint_bar(&font, bar, paused) else { return };
+        let Ok((buffer, canvas)) = pool.create_buffer(w, h, w * 4, wl_shm::Format::Argb8888) else { return };
+        // tiny-skia: premultiplied RGBA. wl_shm ARGB8888 (little endian): B, G, R, A.
+        for (dst, src) in canvas.chunks_exact_mut(4).zip(pm.data().chunks_exact(4)) {
+            dst.copy_from_slice(&[src[2], src[1], src[0], src[3]]);
+        }
+        let surface = bar.surface.layer.wl_surface();
+        surface.set_buffer_scale(sc);
+        surface.damage_buffer(0, 0, w, h);
+        if buffer.attach_to(surface).is_ok() {
+            bar.surface.layer.commit();
+            bar.surface.buffer = Some(buffer);
+        }
+    }
+
+    fn draw_all(&mut self) {
+        for i in 0..self.frame.len() {
+            self.draw_frame(i);
+        }
+        self.draw_bar();
     }
 }
 
-fn run(area: Rect, rx: mpsc::Receiver<Cmd>, ready: &mpsc::SyncSender<bool>) -> Result<(), String> {
+/// The control bar as pixels, at the bar's scale.
+fn paint_bar(font: &FontRef<'static>, bar: &Bar, paused: bool) -> Option<tiny_skia::Pixmap> {
+    use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Transform};
+    let sc = bar.scale.max(1) as f32;
+    let (w, h) = (bar.surface.size.0 as f32, bar.surface.size.1 as f32);
+    let mut pm = Pixmap::new((w * sc) as u32, (h * sc) as u32)?;
+    let t = Transform::from_scale(sc, sc);
+    let fill = |pm: &mut Pixmap, r: Rect, radius: f32, rgb: (u8, u8, u8)| {
+        let mut p = Paint::default();
+        p.anti_alias = true;
+        p.set_color_rgba8(rgb.0, rgb.1, rgb.2, 255);
+        if let Some(path) = rounded(r, radius) {
+            pm.fill_path(&path, &p, FillRule::Winding, t, None);
+        }
+    };
+    pm.fill(Color::from_rgba8(236, 236, 238, 255));
+    // Dot and timer.
+    let (dr, dg, db) = if paused { (255, 170, 0) } else { (226, 38, 38) };
+    let mut p = Paint::default();
+    p.anti_alias = true;
+    p.set_color_rgba8(dr, dg, db, 255);
+    if let Some(c) = PathBuilder::from_circle(8.0 + 6.0, h / 2.0, 5.0) {
+        pm.fill_path(&c, &p, FillRule::Winding, t, None);
+    }
+    text(&mut pm, font, &bar.elapsed, (8.0 + 12.0 + 6.0) * sc, h / 2.0 * sc, 13.0 * sc, (30, 30, 30), false);
+    for (r, a) in buttons(w, bar.can_pause) {
+        let hover = bar.hover == Some(a);
+        match a {
+            BarAction::Stop => {
+                fill(&mut pm, r, 4.0, if hover { (240, 58, 58) } else { (226, 38, 38) });
+                text(&mut pm, font, "Stop", r.center().x * sc, r.center().y * sc, 13.0 * sc, (255, 255, 255), true);
+            }
+            BarAction::Cancel => {
+                fill(&mut pm, r, 4.0, if hover { (200, 200, 200) } else { (214, 214, 214) });
+                text(&mut pm, font, "Cancel", r.center().x * sc, r.center().y * sc, 13.0 * sc, (40, 40, 40), true);
+            }
+            BarAction::Pause => {
+                fill(&mut pm, r, 4.0, if hover { (200, 200, 200) } else { (214, 214, 214) });
+                let c = r.center();
+                let mut ip = Paint::default();
+                ip.anti_alias = true;
+                ip.set_color_rgba8(40, 40, 40, 255);
+                let mut pb = PathBuilder::new();
+                if paused {
+                    // Play: a triangle.
+                    pb.move_to(c.x - 4.0, c.y - 6.0);
+                    pb.line_to(c.x + 6.0, c.y);
+                    pb.line_to(c.x - 4.0, c.y + 6.0);
+                    pb.close();
+                } else {
+                    // Pause: two bars.
+                    for x in [c.x - 5.0, c.x + 2.0] {
+                        if let Some(r) = tiny_skia::Rect::from_xywh(x, c.y - 6.0, 3.0, 12.0) {
+                            pb.push_rect(r);
+                        }
+                    }
+                }
+                if let Some(path) = pb.finish() {
+                    pm.fill_path(&path, &ip, FillRule::Winding, t, None);
+                }
+            }
+        }
+    }
+    Some(pm)
+}
+
+fn rounded(r: Rect, radius: f32) -> Option<tiny_skia::Path> {
+    let (x0, y0, x1, y1) = (r.min.x, r.min.y, r.max.x, r.max.y);
+    let k = radius.min(r.width() / 2.0).min(r.height() / 2.0);
+    let mut pb = tiny_skia::PathBuilder::new();
+    pb.move_to(x0 + k, y0);
+    pb.line_to(x1 - k, y0);
+    pb.quad_to(x1, y0, x1, y0 + k);
+    pb.line_to(x1, y1 - k);
+    pb.quad_to(x1, y1, x1 - k, y1);
+    pb.line_to(x0 + k, y1);
+    pb.quad_to(x0, y1, x0, y1 - k);
+    pb.line_to(x0, y0 + k);
+    pb.quad_to(x0, y0, x0 + k, y0);
+    pb.close();
+    pb.finish()
+}
+
+/// Draws `s` in pixels: starting at `x` (or centered on it), centered on `cy`.
+#[allow(clippy::too_many_arguments)]
+fn text(pm: &mut tiny_skia::Pixmap, font: &FontRef<'static>, s: &str, x: f32, cy: f32, size: f32, rgb: (u8, u8, u8), center: bool) {
+    let sf = font.as_scaled(size);
+    let mut width = 0.0;
+    let mut prev = None;
+    for ch in s.chars() {
+        let id = sf.glyph_id(ch);
+        if let Some(p) = prev {
+            width += sf.kern(p, id);
+        }
+        width += sf.h_advance(id);
+        prev = Some(id);
+    }
+    let mut pen = if center { x - width / 2.0 } else { x };
+    let baseline = cy + (sf.ascent() + sf.descent()) / 2.0;
+    let (pw, ph) = (pm.width() as i32, pm.height() as i32);
+    let data = pm.data_mut();
+    let mut prev = None;
+    for ch in s.chars() {
+        let id = sf.glyph_id(ch);
+        if let Some(p) = prev {
+            pen += sf.kern(p, id);
+        }
+        let glyph = id.with_scale_and_position(size, ab_glyph::point(pen, baseline));
+        if let Some(outline) = font.outline_glyph(glyph) {
+            let b = outline.px_bounds();
+            outline.draw(|gx, gy, cov| {
+                let (px, py) = (b.min.x as i32 + gx as i32, b.min.y as i32 + gy as i32);
+                if px < 0 || py < 0 || px >= pw || py >= ph {
+                    return;
+                }
+                let i = (py * pw + px) as usize * 4;
+                let a = cov.clamp(0.0, 1.0);
+                // Over a solid background: blend straight into the premultiplied pixel.
+                for (k, c) in [rgb.0, rgb.1, rgb.2].into_iter().enumerate() {
+                    data[i + k] = (c as f32 * a + data[i + k] as f32 * (1.0 - a)).round() as u8;
+                }
+                data[i + 3] = 255;
+            });
+        }
+        pen += sf.h_advance(id);
+        prev = Some(id);
+    }
+}
+
+fn run(
+    area: Rect,
+    can_pause: bool,
+    rx: mpsc::Receiver<Cmd>,
+    actions: mpsc::Sender<BarAction>,
+    ready: &mpsc::SyncSender<bool>,
+) -> Result<(), String> {
     let conn = Connection::connect_to_env().map_err(|e| e.to_string())?;
     let (globals, mut queue) = registry_queue_init::<State>(&conn).map_err(|e| e.to_string())?;
     let qh = queue.handle();
     let compositor = CompositorState::bind(&globals, &qh).map_err(|e| e.to_string())?;
     let layer_shell = LayerShell::bind(&globals, &qh).map_err(|_| "the desktop has no layer shell".to_string())?;
     let shm = Shm::bind(&globals, &qh).map_err(|e| e.to_string())?;
+    let font = FontRef::try_from_slice(epaint_default_fonts::UBUNTU_LIGHT).map_err(|e| e.to_string())?;
     let mut st = State {
         registry: RegistryState::new(&globals),
         outputs: OutputState::new(&globals, &qh),
+        seat: SeatState::new(&globals, &qh),
         shm,
         pool: None,
-        bars: Vec::new(),
-        color: RED,
+        frame: Vec::new(),
+        bar: None,
+        paused: false,
         closed: false,
+        pointer: None,
+        cursor_shapes: CursorShapeManager::bind(&globals, &qh).ok(),
+        cursor_device: None,
+        actions,
+        font,
     };
     // Two round trips: the outputs, then their details (xdg-output).
     for _ in 0..2 {
@@ -176,63 +432,75 @@ fn run(area: Rect, rx: mpsc::Receiver<Cmd>, ready: &mpsc::SyncSender<bool>) -> R
     }
 
     // The screen that holds the area, in the same global points as `displays()`.
-    let screens: Vec<(wl_output::WlOutput, Rect)> = st
+    let screens: Vec<(wl_output::WlOutput, Rect, i32)> = st
         .outputs
         .outputs()
         .filter_map(|o| {
             let info = st.outputs.info(&o)?;
             let (x, y) = info.logical_position.unwrap_or(info.location);
             let (w, h) = info.logical_size?;
-            Some((o, Rect::from_min_size(pos2(x as f32, y as f32), vec2(w as f32, h as f32))))
+            Some((o, Rect::from_min_size(pos2(x as f32, y as f32), vec2(w as f32, h as f32)), info.scale_factor))
         })
         .collect();
-    let (output, screen) = screens
+    let (output, screen, scale) = screens
         .iter()
-        .find(|(_, r)| r.contains(area.center()))
+        .find(|(_, r, _)| r.contains(area.center()))
         .or(screens.first())
         .ok_or("no screen found")?;
-    let bars = bars(area, *screen);
-    if bars.is_empty() {
-        return Err("the area fills the screen".into());
-    }
 
-    let mut bytes = 0;
-    for b in &bars {
-        let (w, h) = (b.width().round().max(1.0) as u32, b.height().round().max(1.0) as u32);
-        bytes += (w * h * 4) as usize;
+    // A layer surface at `r` (global points) on that screen.
+    let place = |r: Rect, input: bool| -> Surface {
+        let (w, h) = (r.width().round().max(1.0) as u32, r.height().round().max(1.0) as u32);
         let surface = compositor.create_surface(&qh);
-        // Clicks go through the bars, to whatever is below.
-        if let Ok(region) = Region::new(&compositor) {
-            surface.set_input_region(Some(region.wl_region()));
+        if !input {
+            // Clicks go through, to whatever is below.
+            if let Ok(region) = Region::new(&compositor) {
+                surface.set_input_region(Some(region.wl_region()));
+            }
         }
         let layer = layer_shell.create_layer_surface(&qh, surface, Layer::Overlay, Some("lightsnap-frame"), Some(output));
         layer.set_anchor(Anchor::TOP | Anchor::LEFT);
         // Place it from the screen's corner, not moved aside by panels.
         layer.set_exclusive_zone(-1);
-        let local = b.min - screen.min;
+        let local = r.min - screen.min;
         layer.set_margin(local.y.round() as i32, 0, 0, local.x.round() as i32);
         layer.set_size(w, h);
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         layer.commit();
-        st.bars.push(Bar { layer, size: (w, h), configured: false, buffer: None });
+        Surface { layer, size: (w, h), configured: false, buffer: None }
+    };
+
+    let mut bytes = 0;
+    for b in bars(area, *screen) {
+        let s = place(b, false);
+        bytes += (s.size.0 * s.size.1 * 4) as usize;
+        st.frame.push(s);
     }
-    // Room for two buffers per bar: one shown, one being drawn after a color change.
+    let br = bar_rect(area, *screen, can_pause);
+    let bar_surface = place(br, true);
+    bytes += (bar_surface.size.0 * bar_surface.size.1 * 4) as usize * (*scale as usize).pow(2);
+    st.bar = Some(Bar { surface: bar_surface, scale: *scale, can_pause, elapsed: "00:00".into(), hover: None });
+    // Room for two buffers per surface: one shown, one being drawn.
     st.pool = Some(SlotPool::new(bytes * 2, &st.shm).map_err(|e| e.to_string())?);
     queue.roundtrip(&mut st).map_err(|e| e.to_string())?;
     let _ = ready.try_send(true);
-    log::info!(target: "lightsnap", "recording frame shown: {} bars", st.bars.len());
+    log::info!(target: "lightsnap", "recording frame shown: {} bars and the control bar", st.frame.len());
 
-    // Wait for commands, and keep answering the compositor (it may close the bars).
+    // Wait for commands, and keep answering the compositor (it may close the surfaces).
     loop {
         loop {
             match rx.try_recv() {
-                Ok(Cmd::Paused(p)) => {
-                    let color = if p { ORANGE } else { RED };
-                    if color != st.color {
-                        st.color = color;
-                        for i in 0..st.bars.len() {
-                            st.draw(i);
-                        }
+                Ok(Cmd::Status(elapsed, paused)) => {
+                    let color_changed = paused != st.paused;
+                    st.paused = paused;
+                    let text_changed = st.bar.as_ref().is_some_and(|b| b.elapsed != elapsed);
+                    if let Some(b) = &mut st.bar {
+                        b.elapsed = elapsed;
+                    }
+                    if color_changed {
+                        st.draw_all();
+                    } else if text_changed {
+                        st.draw_bar();
                     }
                 }
                 Ok(Cmd::Hide) | Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
@@ -262,14 +530,83 @@ impl LayerShellHandler for State {
     }
 
     fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface, c: LayerSurfaceConfigure, _: u32) {
-        let Some(i) = self.bars.iter().position(|b| &b.layer == layer) else { return };
-        let bar = &mut self.bars[i];
-        if c.new_size.0 > 0 && c.new_size.1 > 0 {
-            bar.size = c.new_size;
+        if let Some(i) = self.frame.iter().position(|s| &s.layer == layer) {
+            let s = &mut self.frame[i];
+            if c.new_size.0 > 0 && c.new_size.1 > 0 {
+                s.size = c.new_size;
+            }
+            s.configured = true;
+            self.draw_frame(i);
+        } else if let Some(b) = self.bar.as_mut().filter(|b| &b.surface.layer == layer) {
+            if c.new_size.0 > 0 && c.new_size.1 > 0 {
+                b.surface.size = c.new_size;
+            }
+            b.surface.configured = true;
+            self.draw_bar();
         }
-        bar.configured = true;
-        self.draw(i);
     }
+}
+
+impl PointerHandler for State {
+    fn pointer_frame(&mut self, _: &Connection, qh: &QueueHandle<Self>, pointer: &wl_pointer::WlPointer, events: &[PointerEvent]) {
+        let Some(bar) = &self.bar else { return };
+        let bar_surface = bar.surface.layer.wl_surface().clone();
+        let (w, can_pause) = (bar.surface.size.0 as f32, bar.can_pause);
+        let hit = |pos: (f64, f64)| {
+            buttons(w, can_pause).into_iter().find(|(r, _)| r.contains(pos2(pos.0 as f32, pos.1 as f32))).map(|(_, a)| a)
+        };
+        let mut hover = bar.hover;
+        for ev in events.iter().filter(|e| e.surface == bar_surface) {
+            match ev.kind {
+                PointerEventKind::Enter { serial } => {
+                    // A plain arrow over the bar.
+                    if let Some(m) = &self.cursor_shapes {
+                        let dev = self.cursor_device.get_or_insert_with(|| m.get_shape_device(pointer, qh));
+                        dev.set_shape(serial, Shape::Default);
+                    }
+                    hover = hit(ev.position);
+                }
+                PointerEventKind::Motion { .. } => hover = hit(ev.position),
+                PointerEventKind::Leave { .. } => hover = None,
+                // Left button, let go on a button.
+                PointerEventKind::Release { button: 0x110, .. } => {
+                    if let Some(a) = hit(ev.position) {
+                        let _ = self.actions.send(a);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if self.bar.as_ref().is_some_and(|b| b.hover != hover) {
+            if let Some(b) = &mut self.bar {
+                b.hover = hover;
+            }
+            self.draw_bar();
+        }
+    }
+}
+
+impl SeatHandler for State {
+    fn seat_state(&mut self) -> &mut SeatState {
+        &mut self.seat
+    }
+    fn new_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
+    fn new_capability(&mut self, _: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat, capability: Capability) {
+        if capability == Capability::Pointer && self.pointer.is_none() {
+            self.pointer = self.seat.get_pointer(qh, &seat).ok();
+        }
+    }
+    fn remove_capability(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat, capability: Capability) {
+        if capability == Capability::Pointer {
+            if let Some(p) = self.pointer.take() {
+                p.release();
+            }
+            if let Some(d) = self.cursor_device.take() {
+                d.destroy();
+            }
+        }
+    }
+    fn remove_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
 }
 
 impl CompositorHandler for State {
@@ -299,13 +636,15 @@ impl ProvidesRegistryState for State {
     fn registry(&mut self) -> &mut RegistryState {
         &mut self.registry
     }
-    registry_handlers!(OutputState);
+    registry_handlers!(OutputState, SeatState);
 }
 
 delegate_compositor!(State);
 delegate_output!(State);
 delegate_shm!(State);
 delegate_layer!(State);
+delegate_seat!(State);
+delegate_pointer!(State);
 delegate_registry!(State);
 
 #[cfg(test)]
@@ -333,5 +672,38 @@ mod tests {
         assert_eq!(bars(area, screen).len(), 2);
         // Whole screen: nothing to draw.
         assert!(bars(screen, screen).is_empty());
+    }
+
+    #[test]
+    fn control_bar_goes_below_above_or_at_the_bottom() {
+        let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(1920.0, 1080.0));
+        let mid = Rect::from_min_size(pos2(500.0, 200.0), vec2(400.0, 300.0));
+        let b = bar_rect(mid, screen, true);
+        assert_eq!(b.min.y, 512.0);
+        assert!(!b.intersects(mid));
+        // No room below: above.
+        let low = Rect::from_min_size(pos2(500.0, 700.0), vec2(400.0, 360.0));
+        assert!(bar_rect(low, screen, true).max.y <= low.min.y);
+        // Whole screen: near the bottom, on screen.
+        let full = bar_rect(screen, screen, false);
+        assert!(screen.contains_rect(full));
+        // Buttons fit inside the bar.
+        for (r, _) in buttons(256.0, true) {
+            assert!(r.min.x > 0.0 && r.max.x < 256.0);
+        }
+    }
+
+    #[test]
+    fn bar_paints_without_panicking() {
+        let font = FontRef::try_from_slice(epaint_default_fonts::UBUNTU_LIGHT).unwrap();
+        // A bar needs a surface only for its size; paint_bar reads nothing else from it.
+        let pm = {
+            let w = 256.0;
+            let mut pm = tiny_skia::Pixmap::new((w * 2.0) as u32, (BAR_H * 2.0) as u32).unwrap();
+            text(&mut pm, &font, "01:23", 52.0, 40.0, 26.0, (30, 30, 30), false);
+            pm
+        };
+        // Some pixels of the text are dark.
+        assert!(pm.data().chunks_exact(4).any(|p| p[3] == 255 && p[0] < 100));
     }
 }

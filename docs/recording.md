@@ -152,6 +152,12 @@ quality settings). Linux cannot record without ffmpeg.
 - **The clipboard on GNOME goes through plain Wayland.** GNOME has no data-control
   protocol, so copying (pictures, text, file references) and reading ("Open from
   Clipboard") need LightSnap's focus; reading waits for the window to get it.
+- **The control bar is one more layer surface, below the area.** Same place, buttons and
+  colors as on macOS, drawn with tiny-skia and ab_glyph; it takes clicks (the frame
+  doesn't) and hands them to the app (`RecFrame::take_action`). GNOME has none: the tray
+  and the shortcuts control the recording there.
+- **No mouse clicks in the video on Linux.** Wayland tells no app about clicks in other
+  apps' windows; the ScreenCast portal gives the pointer, not its buttons.
 - **The red frame is four layer surfaces outside the area.** The wlr-layer-shell protocol
   lets a surface sit at a fixed place above all windows, without taking clicks or keys.
   KDE Plasma, Sway, Hyprland and COSMIC support it. GNOME does not, and gets no frame:

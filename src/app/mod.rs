@@ -683,6 +683,11 @@ impl eframe::App for LightSnap {
                 // A full-screen capture is not an area to repeat with "Capture Previous Area".
                 let chosen = !sel.as_ref().is_some_and(|s| matches!(s.instant, Some((_, None))));
                 let path = sel.as_ref().and_then(|s| capture::crop_screens(&s.screens, r));
+                // macOS: `screencapture` plays the shutter itself.
+                #[cfg(target_os = "linux")]
+                if path.is_some() && self.settings.sound {
+                    platform::play_capture_sound();
+                }
                 self.visible = false;
                 match path {
                     Some(p) => {
@@ -767,9 +772,8 @@ impl eframe::App for LightSnap {
             // The main window shows only the selection this frame.
             return;
         }
-        // Wayland can't place the control bar next to the area; on Linux the recording is
-        // controlled from the tray and the shortcuts. The frame is a layer surface there
-        // (see platform::RecFrame).
+        // Linux: frame and control bar are layer surfaces (see platform::RecFrame); GNOME
+        // has neither, there the recording is controlled from the tray and the shortcuts.
         if !cfg!(target_os = "linux") {
             if let Some(a) = self.recording_overlays(&ctx) {
                 action = Some(a);
