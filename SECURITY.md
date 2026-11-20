@@ -3,7 +3,7 @@
 ## Supported versions
 
 LightSnap is a small hobby project. Only the latest release gets security fixes.
-Please update to the [latest release](https://github.com/badger12345/lightsnap/releases/latest)
+Please update to the [latest release](https://github.com/pschu13r/lightsnap/releases/latest)
 before you report an issue.
 
 ## Reporting a vulnerability
@@ -11,7 +11,7 @@ before you report an issue.
 Please do not open a public issue for security problems.
 
 Report them privately through GitHub instead:
-[Report a vulnerability](https://github.com/badger12345/lightsnap/security/advisories/new).
+[Report a vulnerability](https://github.com/pschu13r/lightsnap/security/advisories/new).
 
 Please include:
 

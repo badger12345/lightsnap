@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 const TEXT: Color32 = Color32::from_rgb(232, 232, 236);
 const DIM: Color32 = Color32::from_rgb(140, 140, 146);
 
-const REPO: &str = "https://github.com/badger12345/lightsnap";
+const REPO: &str = "https://github.com/pschu13r/lightsnap";
 const ICON_PNG: &[u8] = include_bytes!("../linux/io.github.badger12345.LightSnap.png");
 
 /// Draws the About tab of the settings window. `icon` holds the app icon once loaded.
@@ -46,7 +46,7 @@ pub fn draw(ui: &mut egui::Ui, icon: &mut Option<TextureHandle>) {
             }
         });
         ui.add_space(16.0);
-        ui.label(RichText::new("© 2026 badger12345 · MIT License").size(11.0).color(DIM));
+        ui.label(RichText::new("© 2026 Philipp Schuler · MIT License").size(11.0).color(DIM));
         ui.add_space(2.0);
         if ui.button(RichText::new("Third-Party Licenses").size(11.0)).clicked() {
             match notices_file() {

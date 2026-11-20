@@ -58,9 +58,9 @@ Source code
     FCF9 86EA 15E6 E293 A564 4F10 B432 2F04 D676 58D8):
     https://ffmpeg.org/releases/ffmpeg-$FF_VERSION.tar.xz.asc
   The same tarball and its signature are attached to every LightSnap release:
-    https://github.com/badger12345/lightsnap/releases
+    https://github.com/pschu13r/lightsnap/releases
   The patch and build script are also in the LightSnap source:
-    https://github.com/badger12345/lightsnap
+    https://github.com/pschu13r/lightsnap
 
 Changes by LightSnap
 --------------------

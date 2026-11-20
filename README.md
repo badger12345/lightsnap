@@ -54,7 +54,7 @@ The app is not notarized by Apple (that needs a paid developer account), so macO
 the first time:
 
 1. Download `LightSnap-<version>.zip` from
-   [Releases](https://github.com/badger12345/lightsnap/releases), unzip it and move
+   [Releases](https://github.com/pschu13r/lightsnap/releases), unzip it and move
    `LightSnap.app` to **Applications**.
 2. Open it. macOS says it cannot check the app. Click **Done** (not "Move to Trash").
 3. Go to **System Settings › Privacy & Security**, scroll down to the message about LightSnap
@@ -67,7 +67,7 @@ Instead of steps 2 and 3, you can remove the download mark in Terminal:
 xattr -dr com.apple.quarantine /Applications/LightSnap.app
 ```
 
-To check that your copy was built by badger12345, see [Signing](#signing).
+To check that your copy was built by Philipp Schuler, see [Signing](#signing).
 
 ## Build (macOS)
 
@@ -87,7 +87,7 @@ LightSnap uses this build, or else an ffmpeg from Homebrew.
 
 ## Signing
 
-Releases by badger12345 are signed with a self-signed certificate:
+Releases by Philipp Schuler are signed with a self-signed certificate:
 
     LightSnap Dev, SHA-1 d51bd93470b3635b5b854c8edb609a7709b3f3a6
 
@@ -121,7 +121,7 @@ Needs:
   "AppIndicator and KStatusNotifierItem Support").
 
 Install: download `LightSnap-<version>-linux-<arch>.tar.gz` from
-[Releases](https://github.com/badger12345/lightsnap/releases), unpack it anywhere and start
+[Releases](https://github.com/pschu13r/lightsnap/releases), unpack it anywhere and start
 `lightsnap`. On first start it adds itself to your app list (`~/.local/share/applications`).
 
 Build from source (Ubuntu/Debian package names):
