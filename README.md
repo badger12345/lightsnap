@@ -3,11 +3,12 @@
 A light screenshot and screen-recording app for the macOS menu bar and Linux desktops.
 Nothing is uploaded: captures are saved locally and copied to the clipboard.
 
-<img width="1920" height="1080" alt="lightsnap-gnome-hero" src="https://github.com/user-attachments/assets/78a3b92e-2571-47a0-a699-ac9412de2c7b" />
+## KDE Demo
 
-https://github.com/user-attachments/assets/b8232ba4-2def-4e8c-8b16-cafa73b4fcb8
+<img width="1920" height="1080" alt="lightsnap-kde-hero" src="https://github.com/user-attachments/assets/b1a18dcf-77cf-403a-b507-ac0898b826a7" />
 
-https://github.com/user-attachments/assets/46ae8e39-80f6-49de-8999-1297302c81de
+<img width="960" height="540" alt="lightsnap-kde-record" src="https://github.com/user-attachments/assets/9e076ff1-1bf9-4a9f-8576-4f3757c85357" />
+
 
 ## Why LightSnap
 
