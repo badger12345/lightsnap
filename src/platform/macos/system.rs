@@ -1,8 +1,10 @@
 //! Opening files and apps, notifications, launch at login, and where logs go.
 
-use objc2::msg_send;
+use block2::{Block, RcBlock};
 use objc2::rc::Retained;
-use objc2::runtime::{AnyClass, AnyObject};
+use objc2::runtime::{AnyClass, AnyObject, Bool, NSObject};
+use objc2::{ClassType, define_class, msg_send};
+use objc2_foundation::NSString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -21,11 +23,87 @@ pub fn open_with(app: &str, path: &Path) {
     let _ = Command::new("/usr/bin/open").arg("-a").arg(app).arg(path).spawn();
 }
 
-/// Shows a system notification.
+/// Shows a system notification. Inside LightSnap.app it comes from LightSnap itself (its
+/// name and icon; macOS asks once whether LightSnap may send them). A bare binary has no
+/// bundle for that and goes through `osascript`, which shows it as Script Editor's.
 pub fn notify(title: &str, body: &str) {
+    if in_app_bundle() && notify_from_app(title, body) {
+        return;
+    }
     let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
     let script = format!("display notification \"{}\" with title \"LightSnap\" subtitle \"{}\"", esc(body), esc(title));
     let _ = Command::new("/usr/bin/osascript").args(["-e", &script]).spawn();
+}
+
+#[link(name = "UserNotifications", kind = "framework")]
+unsafe extern "C" {}
+
+define_class!(
+    // Without a delegate macOS shows no banner while LightSnap is the active app, which
+    // it is right after saving in the editor.
+    #[unsafe(super(NSObject))]
+    #[name = "LightSnapNotificationDelegate"]
+    struct NotifyDelegate;
+
+    impl NotifyDelegate {
+        #[unsafe(method(userNotificationCenter:willPresentNotification:withCompletionHandler:))]
+        fn will_present(&self, _center: &AnyObject, _note: &AnyObject, handler: &Block<dyn Fn(usize)>) {
+            // UNNotificationPresentationOptionList | UNNotificationPresentationOptionBanner
+            handler.call(((1 << 3) | (1 << 4),));
+        }
+    }
+);
+
+/// Sends the notification through UNUserNotificationCenter. False if that is not there.
+fn notify_from_app(title: &str, body: &str) -> bool {
+    static DELEGATE: std::sync::Once = std::sync::Once::new();
+    let Some(cls) = AnyClass::get(c"UNUserNotificationCenter") else { return false };
+    let Some(center): Option<Retained<AnyObject>> = (unsafe { msg_send![cls, currentNotificationCenter] }) else {
+        return false;
+    };
+    DELEGATE.call_once(|| {
+        let delegate: Retained<NotifyDelegate> = unsafe { msg_send![NotifyDelegate::class(), new] };
+        let _: () = unsafe { msg_send![&*center, setDelegate: &*delegate] };
+        // The center does not keep the delegate alive.
+        std::mem::forget(delegate);
+    });
+    let (title, body) = (title.to_string(), body.to_string());
+    // Ask first (macOS asks the person only once, later this answers at once), then send:
+    // so the first notification is not lost while the question is open.
+    let send = RcBlock::new(move |granted: Bool, _error: *mut AnyObject| {
+        if !granted.as_bool() {
+            log::info!(target: "lightsnap", "notifications are not allowed");
+            return;
+        }
+        let (Some(content_cls), Some(request_cls), Some(center_cls)) = (
+            AnyClass::get(c"UNMutableNotificationContent"),
+            AnyClass::get(c"UNNotificationRequest"),
+            AnyClass::get(c"UNUserNotificationCenter"),
+        ) else {
+            return;
+        };
+        unsafe {
+            let content: Retained<AnyObject> = msg_send![content_cls, new];
+            let _: () = msg_send![&*content, setTitle: &*NSString::from_str("LightSnap")];
+            let _: () = msg_send![&*content, setSubtitle: &*NSString::from_str(&title)];
+            let _: () = msg_send![&*content, setBody: &*NSString::from_str(&body)];
+            let id = NSString::from_str(&format!("{:?}", std::time::SystemTime::now()));
+            let none: Option<&AnyObject> = None;
+            let Some(request): Option<Retained<AnyObject>> =
+                msg_send![request_cls, requestWithIdentifier: &*id, content: &*content, trigger: none]
+            else {
+                return;
+            };
+            let Some(center): Option<Retained<AnyObject>> = msg_send![center_cls, currentNotificationCenter] else {
+                return;
+            };
+            let done: Option<&Block<dyn Fn(*mut AnyObject)>> = None;
+            let _: () = msg_send![&*center, addNotificationRequest: &*request, withCompletionHandler: done];
+        }
+    });
+    // UNAuthorizationOptionAlert
+    let _: () = unsafe { msg_send![&*center, requestAuthorizationWithOptions: 1usize << 2, completionHandler: &*send] };
+    true
 }
 
 // Words for the interface.

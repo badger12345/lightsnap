@@ -11,16 +11,6 @@ use std::time::Duration;
 /// The area of the last "Capture Area", in global points, for "Capture Previous Area".
 static LAST_AREA: Mutex<Option<Rect>> = Mutex::new(None);
 
-#[link(name = "CoreGraphics", kind = "framework")]
-unsafe extern "C" {
-    fn CGEventSourceButtonState(state: i32, button: u32) -> bool;
-}
-
-fn left_button_down() -> bool {
-    // kCGEventSourceStateCombinedSessionState, kCGMouseButtonLeft
-    unsafe { CGEventSourceButtonState(0, 0) }
-}
-
 /// Runs the capture and blocks until it is done. Returns the image file,
 /// or None if the person cancelled (pressed Esc) or capture failed.
 pub fn run_capture(kind: CaptureKind, sound: bool) -> Option<PathBuf> {
@@ -49,10 +39,10 @@ pub fn run_capture(kind: CaptureKind, sound: bool) -> Option<PathBuf> {
             cmd.args(["-i", "-w"]);
         }
         CaptureKind::FullScreen => {
-            cmd.arg("-m");
+            cmd.args(["-D", &mouse_screen().to_string()]);
         }
         CaptureKind::Timed(s) => {
-            cmd.args(["-m", "-T", &s.to_string()]);
+            cmd.args(["-D", &mouse_screen().to_string(), "-T", &s.to_string()]);
         }
     }
     cmd.arg(&out);
@@ -69,6 +59,13 @@ pub fn run_capture(kind: CaptureKind, sound: bool) -> Option<PathBuf> {
     if ok && out.exists() { Some(out) } else { None }
 }
 
+/// The screen under the mouse as `screencapture -D` counts it: 1 is the main screen, then
+/// the others in the order CoreGraphics lists them (the order of `displays()`).
+fn mouse_screen() -> usize {
+    let displays = super::displays();
+    super::mouse_position().map_or(0, |m| crate::platform::display_index_at(&displays, m)) + 1
+}
+
 /// Waits for `screencapture -i` and follows the mouse meanwhile: `screencapture` does not
 /// say which area was chosen, but the drag does. Returns where the drag started and ended.
 fn wait_watching_mouse(mut child: Child) -> (bool, Option<(Pos2, Pos2)>) {
@@ -79,7 +76,7 @@ fn wait_watching_mouse(mut child: Child) -> (bool, Option<(Pos2, Pos2)>) {
             Ok(None) => {}
             Err(_) => break None,
         }
-        let down = left_button_down();
+        let down = super::left_button_down();
         let p = super::mouse_position();
         if down && !was_down {
             start = p;

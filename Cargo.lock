@@ -1622,6 +1622,7 @@ dependencies = [
  "ab_glyph",
  "arboard",
  "ashpd",
+ "block2 0.6.2",
  "chrono",
  "dirs",
  "eframe",

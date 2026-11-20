@@ -359,6 +359,19 @@ impl LightSnap {
         let mouse_i = platform::mouse_position()
             .and_then(|m| bounds_list.iter().position(|b| b.contains(m)))
             .unwrap_or(shown);
+        // macOS: while dragging, follow the mouse itself, not the events of the window where
+        // the drag began. That window can stop getting them once the mouse is on another
+        // screen, and the window on that screen has to be drawn again as well.
+        #[cfg(target_os = "macos")]
+        let (global, released) = match drag.is_some() {
+            true => {
+                ctx.request_repaint();
+                (platform::mouse_position(), !platform::left_button_down())
+            }
+            false => (None, false),
+        };
+        #[cfg(not(target_os = "macos"))]
+        let (global, released): (Option<Pos2>, bool) = (None, false);
         let mut out = SelectOut::None;
         let mut any_focus_sent = *focused;
 
@@ -411,7 +424,7 @@ impl LightSnap {
                     return countdown_overlay(ui, &painter, full, to_local(r), t0, r);
                 }
                 let resp = ui.interact(full, Id::new(("sel_bg", si)), Sense::click_and_drag());
-                let pointer = resp.interact_pointer_pos().map(|p| p + offset);
+                let pointer = global.or_else(|| resp.interact_pointer_pos().map(|p| p + offset));
 
                 if resp.drag_started() {
                     let p = ui.input(|i| i.pointer.press_origin()).unwrap_or_default() + offset;
@@ -431,8 +444,9 @@ impl LightSnap {
                         }
                         None => SelDrag::New(p),
                     });
+                    log::info!(target: "lightsnap", "select: drag started on screen {si} at {p:?}");
                 }
-                if resp.dragged() {
+                if resp.dragged() || (global.is_some() && drag.is_some()) {
                     if let (Some(d), Some(p)) = (*drag, pointer) {
                         *rect = Some(match d {
                             SelDrag::New(s) => Rect::from_two_pos(s, p).intersect(all),
@@ -471,8 +485,9 @@ impl LightSnap {
                 if let (true, Some(w)) = (resp.clicked(), hovered_window) {
                     shot_taken = Some(w);
                 }
-                if resp.drag_stopped() {
+                if (resp.drag_stopped() || released) && drag.is_some() {
                     *drag = None;
+                    log::info!(target: "lightsnap", "select: drag stopped on screen {si}, area {rect:?}");
                     let min = if shot_mode { 3.0 } else { 16.0 };
                     if rect.is_some_and(|r| r.width() < min || r.height() < min) {
                         *rect = None;

@@ -36,6 +36,7 @@ unsafe extern "C" {
     fn CGDisplayModeRelease(mode: *mut c_void);
     fn CGEventCreate(source: *mut c_void) -> *mut c_void;
     fn CGEventGetLocation(event: *mut c_void) -> CGPoint;
+    fn CGEventSourceButtonState(state: i32, button: u32) -> bool;
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
@@ -89,6 +90,12 @@ pub fn mouse_position() -> Option<Pos2> {
         CFRelease(ev as *const c_void);
         Some(pos2(p.x as f32, p.y as f32))
     }
+}
+
+/// Whether the left mouse button is held down right now.
+pub fn left_button_down() -> bool {
+    // kCGEventSourceStateCombinedSessionState, kCGMouseButtonLeft
+    unsafe { CGEventSourceButtonState(0, 0) }
 }
 
 #[cfg(test)]
