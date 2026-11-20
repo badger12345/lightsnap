@@ -3,6 +3,9 @@
 A light screenshot and screen-recording app for the macOS menu bar and Linux desktops.
 Nothing is uploaded: captures are saved locally and copied to the clipboard.
 
+**[Download the latest release](https://github.com/pschu13r/lightsnap/releases/latest)**
+for macOS (Apple Silicon) and Linux (Wayland, x86_64 and arm64).
+
 ## KDE Demo
 
 <img width="1920" height="1080" alt="lightsnap-kde-hero" src="https://github.com/user-attachments/assets/b1a18dcf-77cf-403a-b507-ac0898b826a7" />
@@ -23,16 +26,16 @@ annotate it. Every change should update the clipboard, so I can paste the result
 wherever it needs to go. And videos need to be crisp and small at the same time, so I
 can send them without waiting.
 
-Very few tools do both screenshots and screen recordings. Even fewer save me clicks or
-are free and open source. Many also get worse over time: accounts, cloud uploads,
+Many tools take screenshots and record the screen. But I found none that also saves me
+these clicks, keeps videos small and is free and open source. Many also get worse over time: accounts, cloud uploads,
 subscriptions, ads, and more memory with every update. When my last tool started to
 leak several GB of memory, I built my own.
 
 Now I have exactly the simple, lightweight tool I need every day. Maybe you will find
 it useful too.
 
-- **Fewer clicks:** unlike the tools built into macOS and Linux, LightSnap copies every
-  capture and every edit to the clipboard right away. No extra copy step.
+- **Fewer clicks:** every capture goes to the clipboard right away, and every edit
+  updates it. No extra copy step after you annotate.
 - **2 in 1:** take and annotate screenshots, and record your screen, in one tool.
 - **Small videos:** you choose the frame rate and quality. QuickTime and other built-in
   recorders make huge files that take ages to send. LightSnap keeps them small.
@@ -102,6 +105,28 @@ To sign your own builds, see [Signing](CONTRIBUTING.md#signing-macos) in CONTRIB
 LightSnap runs on Wayland desktops. X11 is not supported. It is tested on GNOME and KDE
 Plasma.
 
+### Install (Linux)
+
+Download `LightSnap-<version>-linux-<arch>.tar.gz` from
+[Releases](https://github.com/pschu13r/lightsnap/releases), unpack it anywhere and start
+`lightsnap`. On first start it adds itself to your app list (`~/.local/share/applications`).
+
+LightSnap also needs:
+
+- **ffmpeg with x264** for recordings. To check, run `ffmpeg -encoders | grep libx264`.
+  - Ubuntu, Debian: `sudo apt install ffmpeg`
+  - Fedora: the default `ffmpeg-free` has no x264. Enable
+    [RPM Fusion](https://rpmfusion.org/Configuration), then run
+    `sudo dnf swap ffmpeg-free ffmpeg --allowerasing`.
+  - Arch: `sudo pacman -S ffmpeg`
+  - openSUSE: the ffmpeg from [Packman](https://en.opensuse.org/Additional_package_repositories#Packman)
+- **xdg-desktop-portal** with a backend for your desktop, and **PipeWire**. Most Wayland
+  desktops have both. Global shortcuts need GNOME 48+ or KDE Plasma 6.
+- **On GNOME:** the AppIndicator extension for the tray icon (Ubuntu has it; on Fedora install
+  "AppIndicator and KStatusNotifierItem Support").
+
+### First start
+
 Wayland lets no app read the screen or catch keys on its own, so LightSnap asks the desktop
 through its portals. Your desktop asks you once for each:
 
@@ -109,37 +134,36 @@ through its portals. Your desktop asks you once for each:
   the tiles, or **Share full Workspace**) and keep **Remember this selection**. The desktop
   asks again when your screens change.
 - **Global shortcuts**: confirm the keys. To change them later, use your desktop's settings
-  (GNOME: **Settings › Apps › LightSnap**).
+  (GNOME: **Settings › Apps › LightSnap**, KDE: **System Settings › Keyboard › Shortcuts**).
+
+### Differences between macOS and Linux desktops
+
+|                      | macOS                          | KDE Plasma                     | GNOME                                |
+|----------------------|--------------------------------|--------------------------------|--------------------------------------|
+| Capture Window       | Click the highlighted window   | Click the highlighted window   | The desktop's own picker             |
+| Start a recording    | Starts right away              | Starts right away              | A 3 s countdown shows the area first |
+| While recording      | Red frame and control bar      | Red frame and control bar      | Tray icon only                       |
+| Capture mouse clicks | Yes                            | No                             | No                                   |
 
 Capture Area works as on macOS: the screen freezes, you drag a frame, and when you let go
-the picture is taken (and copied). No button, no Enter. With several screens the area is
-chosen on the screen the desktop opens LightSnap on, usually the one with the mouse; a frame
-can't reach across two screens. Capture Fullscreen and Timed Capture take that whole
-screen. Capture Window on KDE Plasma works as on macOS too: the window under the mouse is
-highlighted, a click takes it. Other desktops don't tell apps where windows are, so there
-Capture Window uses the desktop's own picker (GNOME may ask once whether LightSnap may take
-screenshots). While recording,
-LightSnap has no window: stop or pause it from the tray icon or with the shortcut. The
-tray icon shows a red dot with a ring around it that fills once a minute (orange while
-paused); the exact time is in the tray menu's tooltip. On KDE
-Plasma, Sway, Hyprland and COSMIC a red frame shows the recorded area and a control bar
-below it has the timer, Pause, Stop and Cancel, as on macOS (orange while paused); the
-recording starts right away. Wayland tells no app about clicks in other windows, so
-"Capture mouse clicks" is macOS only. GNOME does not let apps draw such a
-frame, so there a 3 s countdown shows the area first.
+the picture is taken (and copied). No button, no Enter.
 
-Needs:
+- **Several screens:** the area is chosen on the screen the desktop opens LightSnap on,
+  usually the one with the mouse. A frame can't reach across two screens. Capture
+  Fullscreen and Timed Capture take that whole screen.
+- **Capture Window:** only KDE Plasma tells apps where windows are. Other desktops use their
+  own picker. GNOME may ask once whether LightSnap may take screenshots.
+- **Recording:** LightSnap has no window while it records. Stop or pause it with the
+  shortcut, from the tray icon or, where there is one, from the control bar below the red
+  frame (timer, Pause, Stop, Cancel; orange while paused). The tray icon shows a red dot
+  with a ring that fills once a minute (orange while paused). The exact time is in the tray
+  menu's tooltip.
+- **Mouse clicks:** Wayland tells no app about clicks in other windows, so "Capture mouse
+  clicks" is macOS only.
 
-- xdg-desktop-portal with a backend for your desktop (GNOME 48+ or KDE Plasma 6 for global
-  shortcuts), PipeWire, and ffmpeg with x264 (`sudo apt install ffmpeg`).
-- GNOME shows the tray icon with the AppIndicator extension (Ubuntu has it; on Fedora install
-  "AppIndicator and KStatusNotifierItem Support").
+### Build from source
 
-Install: download `LightSnap-<version>-linux-<arch>.tar.gz` from
-[Releases](https://github.com/pschu13r/lightsnap/releases), unpack it anywhere and start
-`lightsnap`. On first start it adds itself to your app list (`~/.local/share/applications`).
-
-Build from source (Ubuntu/Debian package names):
+Ubuntu/Debian package names:
 
 ```bash
 sudo apt install build-essential pkg-config clang libclang-dev libpipewire-0.3-dev \
