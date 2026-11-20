@@ -143,7 +143,10 @@ quality settings). Linux cannot record without ffmpeg.
   timed captures open the same window and take the whole screen at once, undimmed, as soon
   as the window has the keyboard focus: on GNOME only a focused window can set the
   clipboard without XWayland (`wl_clipboard.rs`). The shortcut portal's activation token
-  is handed to the window (`XDG_ACTIVATION_TOKEN`), so GNOME gives it the focus.
+  is handed to the window (`XDG_ACTIVATION_TOKEN`), so GNOME gives it the focus. A window
+  that is already open gets the token of a tray click or shortcut through xdg-activation-v1
+  (`activate.rs`). KDE's shortcut portal sends no token: there a shortcut can't bring an
+  open window to the front, a tray click can.
 - **Capture Window on KDE uses the same selection.** A KWin script lists the windows
   (`windows.rs`, through org.kde.kwin.Scripting, open to every app) before the picture is
   taken; the window under the mouse is highlighted and a click takes it, with its title

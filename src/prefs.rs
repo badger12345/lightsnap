@@ -415,6 +415,10 @@ impl Prefs {
             out.changed |= ui.checkbox(&mut s.copy_path, "Path").changed();
             ui.add_space(16.0);
             out.changed |= ui.checkbox(&mut s.copy_image, "Image").changed();
+            // Linux copies PNG only: TIFF is a macOS clipboard format.
+            if cfg!(target_os = "linux") {
+                return;
+            }
             ui.add_space(16.0);
             let label = match s.clip_format {
                 ClipFormat::Png => "PNG",

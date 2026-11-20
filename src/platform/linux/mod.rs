@@ -6,6 +6,7 @@
 //! xdg-desktop-portal, which asks the person once. The tray icon is a
 //! StatusNotifierItem (GNOME shows it with the AppIndicator extension).
 
+mod activate;
 mod capture;
 mod clipboard;
 mod displays;
@@ -17,6 +18,7 @@ mod tray;
 mod windows;
 mod wl_clipboard;
 
+pub use activate::activate;
 pub use capture::*;
 pub use clipboard::*;
 pub use displays::*;

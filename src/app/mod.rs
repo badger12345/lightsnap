@@ -181,6 +181,9 @@ pub struct LightSnap {
     /// Linux: "Open from Clipboard" waits for the window's focus since then (see `logic`).
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     clipboard_wait: Option<Instant>,
+    /// Linux: put the open main window in front in the next frame (see `logic`).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    raise: bool,
 }
 
 impl LightSnap {
@@ -236,6 +239,7 @@ impl LightSnap {
             perm_prompt: false,
             last_area: None,
             clipboard_wait: None,
+            raise: false,
             perm_asking: false,
         };
         app.refresh_screen();
@@ -307,6 +311,8 @@ impl LightSnap {
         ctx.send_viewport_cmd(ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(ViewportCommand::Focus);
         self.visible = true;
+        // Wayland ignores `Focus`; there the window needs the desktop's token.
+        self.raise = true;
     }
 
     /// An extra window lost a frame after drawing it, so pictures and letters sent in that
@@ -513,6 +519,9 @@ impl eframe::App for LightSnap {
             self.place_selection(_frame);
             if let Some(w) = _frame.winit_window() {
                 platform::attach_clipboard(w);
+                if std::mem::take(&mut self.raise) {
+                    platform::activate(w);
+                }
             }
             if let Some(t) = self.clipboard_wait {
                 if platform::clipboard_ready_known() || t.elapsed() > Duration::from_millis(1500) {

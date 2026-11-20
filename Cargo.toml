@@ -43,6 +43,7 @@ arboard = { version = "3.7", default-features = false, features = ["image-data",
 smithay-client-toolkit = { version = "0.19", default-features = false }
 wayland-client = "0.31"
 wayland-backend = { version = "0.3", features = ["client_system"] }
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 futures-util = { version = "0.3", default-features = false }
 pipewire = "0.10"
 

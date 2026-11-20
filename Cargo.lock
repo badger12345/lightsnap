@@ -1646,6 +1646,7 @@ dependencies = [
  "tray-icon",
  "wayland-backend",
  "wayland-client",
+ "wayland-protocols",
  "winit",
  "zbus 6.3.0",
 ]
