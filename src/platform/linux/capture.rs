@@ -23,6 +23,7 @@ pub fn run_capture(kind: CaptureKind, _sound: bool) -> Option<PathBuf> {
 
 fn portal_screenshot(interactive: bool) -> Option<PathBuf> {
     super::portal::register();
+    ensure_pictures_dir();
     let res = pollster::block_on(async {
         Screenshot::request().interactive(interactive).modal(false).send().await?.response()
     });
@@ -35,6 +36,16 @@ fn portal_screenshot(interactive: bool) -> Option<PathBuf> {
             }
             None
         }
+    }
+}
+
+/// KDE's portal saves the picture in the Pictures folder and fails without a reason when
+/// that folder is missing (minimal installs, or deleted). Make it first; LightSnap moves
+/// the picture out again, so the folder stays empty.
+fn ensure_pictures_dir() {
+    let Some(dir) = dirs::picture_dir().or_else(|| dirs::home_dir().map(|h| h.join("Pictures"))) else { return };
+    if !dir.exists() && std::fs::create_dir_all(&dir).is_ok() {
+        log::info!(target: "lightsnap", "made the missing Pictures folder {} for the screenshot portal", dir.display());
     }
 }
 

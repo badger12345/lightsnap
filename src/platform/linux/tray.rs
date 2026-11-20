@@ -21,18 +21,31 @@ struct Sni {
 const ICON_IDLE: &str = "lightsnap-tray";
 const ICON_REC: &str = "lightsnap-tray-recording";
 
-/// Writes both tray icons as PNG files. Tray hosts reliably follow a change of icon
-/// *name*; a changed picture alone is not always picked up (GNOME's AppIndicator
-/// extension keeps the first one).
+/// Writes both tray icons as files. Tray hosts reliably follow a change of icon *name*; a
+/// changed picture alone is not always picked up (GNOME's AppIndicator extension keeps
+/// the first one).
+///
+/// The camera is an SVG in KDE's text color class: Plasma paints it in the panel's text
+/// color, dark on a light panel and light on a dark one. Other hosts draw it in the white
+/// given in the file (GNOME's top bar is dark). The red dot is a PNG, it shows on any panel.
 fn write_icons() -> Option<std::path::PathBuf> {
     let dir = dirs::cache_dir()?.join("lightsnap").join("icons");
     std::fs::create_dir_all(&dir).ok()?;
-    for (name, rec) in [(ICON_IDLE, false), (ICON_REC, true)] {
-        let img = image::RgbaImage::from_raw(TRAY_PX, TRAY_PX, tray_pixels(rec, true))?;
-        img.save(dir.join(format!("{name}.png"))).ok()?;
-    }
+    // Up to v0.4.2 the camera was a PNG; with both files the host may pick the old one.
+    let _ = std::fs::remove_file(dir.join(format!("{ICON_IDLE}.png")));
+    std::fs::write(dir.join(format!("{ICON_IDLE}.svg")), CAMERA_SVG).ok()?;
+    let img = image::RgbaImage::from_raw(TRAY_PX, TRAY_PX, tray_pixels(true, true))?;
+    img.save(dir.join(format!("{ICON_REC}.png"))).ok()?;
     Some(dir)
 }
+
+/// The camera of `tray_pixels` as SVG (44 × 44): body, top bump, lens ring and lens.
+const CAMERA_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44">
+<style id="current-color-scheme" type="text/css">.ColorScheme-Text { color: #ffffff; }</style>
+<path class="ColorScheme-Text" fill="currentColor" fill-rule="evenodd"
+ d="M5 13h34v23H5z M15 8h14v5H15z M14.5 24.5a7.5 7.5 0 1 0 15 0a7.5 7.5 0 1 0 -15 0z M18 24.5a4 4 0 1 0 8 0a4 4 0 1 0 -8 0z"/>
+</svg>
+"#;
 
 impl ksni::Tray for Sni {
     fn id(&self) -> String {
