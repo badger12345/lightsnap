@@ -497,6 +497,9 @@ impl LightSnap {
                     let title = format!("{}{}", if paused { "❚❚ " } else { "" }, record::format_elapsed(r.rec.elapsed()));
                     if let Some(t) = &self.tray {
                         t.set_title(Some(&title));
+                        // Linux: the tray shows no text; a ring around the dot fills each minute.
+                        #[cfg(target_os = "linux")]
+                        t.set_progress(r.rec.elapsed().as_secs(), paused);
                     }
                 }
                 ctx.request_repaint_after(Duration::from_millis(500));

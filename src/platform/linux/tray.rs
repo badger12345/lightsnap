@@ -12,6 +12,8 @@ use std::sync::{Arc, Mutex};
 struct Sni {
     menu: Vec<MenuEntry>,
     recording: bool,
+    /// While recording: the ring's step (see `ring_pixels`) and whether paused.
+    progress: (u32, bool),
     title: Option<String>,
     sink: Sink,
     /// Folder with the two icons as files (see `write_icons`), if it could be made.
@@ -20,6 +22,62 @@ struct Sni {
 
 const ICON_IDLE: &str = "lightsnap-tray";
 const ICON_REC: &str = "lightsnap-tray-recording";
+/// Steps of the ring around the recording dot: it fills once a minute, a step every 5 s.
+const RING_STEPS: u32 = 12;
+
+fn rec_icon_name(step: u32, paused: bool) -> String {
+    format!("{ICON_REC}-{step:02}{}", if paused { "-paused" } else { "" })
+}
+
+/// The tray icon while recording, as RGBA (`TRAY_PX` square): a dot, and a ring around it
+/// that fills clockwise from the top in `RING_STEPS` steps per minute. Shows that the
+/// recording runs and roughly how far into the minute it is; the bar on KDE and the tray
+/// menu have the exact time. Red, orange while paused.
+fn ring_pixels(step: u32, paused: bool) -> Vec<u8> {
+    use tiny_skia::{FillRule, LineCap, Paint, PathBuilder, Pixmap, Stroke, Transform};
+    let n = TRAY_PX;
+    let Some(mut pm) = Pixmap::new(n, n) else { return vec![0; (n * n * 4) as usize] };
+    let (r, g, b) = if paused { (255, 170, 0) } else { (230, 40, 40) };
+    let c = n as f32 / 2.0;
+    let mut paint = Paint::default();
+    paint.anti_alias = true;
+    paint.set_color_rgba8(r, g, b, 255);
+    if let Some(dot) = PathBuilder::from_circle(c, c, 9.0) {
+        pm.fill_path(&dot, &paint, FillRule::Winding, Transform::identity(), None);
+    }
+    let stroke = Stroke { width: 4.0, line_cap: LineCap::Butt, ..Default::default() };
+    // The track, faint, then the part of the minute that has passed.
+    let mut track = Paint::default();
+    track.anti_alias = true;
+    track.set_color_rgba8(r, g, b, 70);
+    if let Some(ring) = PathBuilder::from_circle(c, c, 17.0) {
+        pm.stroke_path(&ring, &track, &stroke, Transform::identity(), None);
+    }
+    let frac = (step.min(RING_STEPS) as f32) / RING_STEPS as f32;
+    if frac > 0.0 {
+        let mut pb = PathBuilder::new();
+        let segs = (frac * 48.0).ceil() as i32;
+        for i in 0..=segs {
+            let a = -std::f32::consts::FRAC_PI_2 + std::f32::consts::TAU * frac * i as f32 / segs as f32;
+            let (x, y) = (c + 17.0 * a.cos(), c + 17.0 * a.sin());
+            if i == 0 { pb.move_to(x, y) } else { pb.line_to(x, y) }
+        }
+        if let Some(arc) = pb.finish() {
+            pm.stroke_path(&arc, &paint, &stroke, Transform::identity(), None);
+        }
+    }
+    // tiny-skia is premultiplied; the image crate and the tray want straight alpha.
+    let mut px = pm.take();
+    for p in px.chunks_exact_mut(4) {
+        let a = p[3] as u32;
+        if a > 0 && a < 255 {
+            for v in &mut p[..3] {
+                *v = ((*v as u32 * 255 + a / 2) / a).min(255) as u8;
+            }
+        }
+    }
+    px
+}
 
 /// Writes both tray icons as files. Tray hosts reliably follow a change of icon *name*; a
 /// changed picture alone is not always picked up (GNOME's AppIndicator extension keeps
@@ -34,8 +92,13 @@ fn write_icons() -> Option<std::path::PathBuf> {
     // Up to v0.4.2 the camera was a PNG; with both files the host may pick the old one.
     let _ = std::fs::remove_file(dir.join(format!("{ICON_IDLE}.png")));
     std::fs::write(dir.join(format!("{ICON_IDLE}.svg")), CAMERA_SVG).ok()?;
-    let img = image::RgbaImage::from_raw(TRAY_PX, TRAY_PX, tray_pixels(true, true))?;
-    img.save(dir.join(format!("{ICON_REC}.png"))).ok()?;
+    let _ = std::fs::remove_file(dir.join(format!("{ICON_REC}.png")));
+    for paused in [false, true] {
+        for step in 0..=RING_STEPS {
+            let img = image::RgbaImage::from_raw(TRAY_PX, TRAY_PX, ring_pixels(step, paused))?;
+            img.save(dir.join(format!("{}.png", rec_icon_name(step, paused)))).ok()?;
+        }
+    }
     Some(dir)
 }
 
@@ -64,11 +127,11 @@ impl ksni::Tray for Sni {
         if self.icon_dir.is_none() {
             return String::new();
         }
-        (if self.recording { ICON_REC } else { ICON_IDLE }).into()
+        if self.recording { rec_icon_name(self.progress.0, self.progress.1) } else { ICON_IDLE.into() }
     }
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
         // RGBA → ARGB, as the spec wants.
-        let mut data = tray_pixels(self.recording, true);
+        let mut data = if self.recording { ring_pixels(self.progress.0, self.progress.1) } else { tray_pixels(false, true) };
         for px in data.chunks_exact_mut(4) {
             px.rotate_right(1);
         }
@@ -146,7 +209,7 @@ pub struct Tray(Handle<Sni>);
 
 impl Tray {
     pub fn new(menu: Vec<MenuEntry>, sink: Sink) -> Option<Self> {
-        let sni = Sni { menu, recording: false, title: None, sink, icon_dir: write_icons() };
+        let sni = Sni { menu, recording: false, progress: (0, false), title: None, sink, icon_dir: write_icons() };
         match sni.spawn() {
             Ok(h) => Some(Self(h)),
             Err(e) => {
@@ -161,7 +224,20 @@ impl Tray {
     }
 
     pub fn set_recording(&self, on: bool) {
-        self.0.update(|t| t.recording = on);
+        self.0.update(|t| {
+            t.recording = on;
+            t.progress = (0, false);
+        });
+    }
+
+    /// The ring around the recording dot after `secs` seconds; orange while paused.
+    pub fn set_progress(&self, secs: u64, paused: bool) {
+        let p = (((secs % 60) / (60 / RING_STEPS as u64)) as u32, paused);
+        self.0.update(|t| {
+            if t.progress != p {
+                t.progress = p;
+            }
+        });
     }
 
     pub fn set_title(&self, title: Option<&str>) {

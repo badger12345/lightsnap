@@ -118,7 +118,9 @@ screen. Capture Window on KDE Plasma works as on macOS too: the window under the
 highlighted, a click takes it. Other desktops don't tell apps where windows are, so there
 Capture Window uses the desktop's own picker (GNOME may ask once whether LightSnap may take
 screenshots). While recording,
-LightSnap has no window: stop or pause it from the tray icon or with the shortcut. On KDE
+LightSnap has no window: stop or pause it from the tray icon or with the shortcut. The
+tray icon shows a red dot with a ring around it that fills once a minute (orange while
+paused); the exact time is in the tray menu's tooltip. On KDE
 Plasma, Sway, Hyprland and COSMIC a red frame shows the recorded area and a control bar
 below it has the timer, Pause, Stop and Cancel, as on macOS (orange while paused); the
 recording starts right away. Wayland tells no app about clicks in other windows, so
