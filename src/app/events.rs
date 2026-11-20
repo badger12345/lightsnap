@@ -145,20 +145,15 @@ impl LightSnap {
             }
             Action::Show => self.show_window(ctx),
             Action::OpenClipboard => {
-                let tmp = platform::temp_file("clip", "png");
-                if platform::clipboard_png_to_file(&tmp) {
-                    match image::open(&tmp) {
-                        Ok(img) => {
-                            let ed = Editor::new(img.to_rgba8(), self.settings.make_name("Screenshot"), self.native_ppp);
-                            self.set_editor(ctx, ed);
-                        }
-                        Err(_) => self.toast("There is no picture on the clipboard", None),
-                    }
-                } else {
-                    self.toast("There is no picture on the clipboard", None);
+                // Linux: GNOME tells only the focused app what is on the clipboard. Open the
+                // window first and read once it has the focus (see `logic`).
+                #[cfg(target_os = "linux")]
+                if !platform::clipboard_ready_known() {
+                    self.clipboard_wait = Some(Instant::now());
+                    self.show_window(ctx);
+                    return;
                 }
-                let _ = std::fs::remove_file(&tmp);
-                self.show_window(ctx);
+                self.open_clipboard(ctx);
             }
             Action::OpenLatest => {
                 // The last screenshot taken, even if it was never saved.
@@ -217,6 +212,24 @@ impl LightSnap {
                 }
             }
         }
+    }
+
+    /// Opens the picture on the clipboard in the editor.
+    pub(super) fn open_clipboard(&mut self, ctx: &egui::Context) {
+        let tmp = platform::temp_file("clip", "png");
+        if platform::clipboard_png_to_file(&tmp) {
+            match image::open(&tmp) {
+                Ok(img) => {
+                    let ed = Editor::new(img.to_rgba8(), self.settings.make_name("Screenshot"), self.native_ppp);
+                    self.set_editor(ctx, ed);
+                }
+                Err(_) => self.toast("There is no picture on the clipboard", None),
+            }
+        } else {
+            self.toast("There is no picture on the clipboard", None);
+        }
+        let _ = std::fs::remove_file(&tmp);
+        self.show_window(ctx);
     }
 
     /// The frozen pictures of a capture job as screens to choose an area on. The files go away.
@@ -321,6 +334,7 @@ impl LightSnap {
             if let Ok(res) = job.rx.try_recv() {
                 let (kind, for_record, show_after) = (job.kind, job.for_record, job.show_after);
                 let select_shot = job.select_shot;
+                let job_windows = job.windows.lock().map(|w| w.clone()).unwrap_or_default();
                 self.job = None;
                 match (res.first().cloned(), for_record || select_shot) {
                     (Some(p), false) => self.handle_capture(ctx, p, show_after),
@@ -350,6 +364,7 @@ impl LightSnap {
                                 placed: false,
                                 shown: 0,
                                 instant,
+                                windows: job_windows,
                             });
                             ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
                         }
@@ -380,6 +395,7 @@ impl LightSnap {
                                 placed: false,
                                 shown: 0,
                                 instant: None,
+                                windows: Vec::new(),
                             });
                             ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
                         }

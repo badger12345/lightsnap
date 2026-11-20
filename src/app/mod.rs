@@ -112,6 +112,8 @@ struct Job {
     /// Linux: the picture is for choosing a screenshot area in LightSnap (see `start_capture`).
     select_shot: bool,
     show_after: bool,
+    /// Linux "Capture Window": the windows, listed before the picture was taken.
+    windows: Arc<Mutex<Vec<Rect>>>,
 }
 
 struct Toast {
@@ -176,6 +178,9 @@ pub struct LightSnap {
     /// Linux: the area of the last area screenshot, for "Capture Previous Area" (global points).
     /// macOS keeps it in `platform`.
     last_area: Option<Rect>,
+    /// Linux: "Open from Clipboard" waits for the window's focus since then (see `logic`).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    clipboard_wait: Option<Instant>,
 }
 
 impl LightSnap {
@@ -230,6 +235,7 @@ impl LightSnap {
             resent: 0,
             perm_prompt: false,
             last_area: None,
+            clipboard_wait: None,
             perm_asking: false,
         };
         app.refresh_screen();
@@ -507,6 +513,14 @@ impl eframe::App for LightSnap {
             self.place_selection(_frame);
             if let Some(w) = _frame.winit_window() {
                 platform::attach_clipboard(w);
+            }
+            if let Some(t) = self.clipboard_wait {
+                if platform::clipboard_ready_known() || t.elapsed() > Duration::from_millis(1500) {
+                    self.clipboard_wait = None;
+                    self.open_clipboard(ctx);
+                } else {
+                    ctx.request_repaint_after(Duration::from_millis(20));
+                }
             }
         }
         // Remember the screen size while the main window is around.

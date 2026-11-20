@@ -144,6 +144,14 @@ quality settings). Linux cannot record without ffmpeg.
   as the window has the keyboard focus: on GNOME only a focused window can set the
   clipboard without XWayland (`wl_clipboard.rs`). The shortcut portal's activation token
   is handed to the window (`XDG_ACTIVATION_TOKEN`), so GNOME gives it the focus.
+- **Capture Window on KDE uses the same selection.** A KWin script lists the windows
+  (`windows.rs`, through org.kde.kwin.Scripting, open to every app) before the picture is
+  taken; the window under the mouse is highlighted and a click takes it, with its title
+  bar. Parts of other windows on top of it are in the picture, unlike macOS. Other
+  desktops have no such list and keep their own picker.
+- **The clipboard on GNOME goes through plain Wayland.** GNOME has no data-control
+  protocol, so copying (pictures, text, file references) and reading ("Open from
+  Clipboard") need LightSnap's focus; reading waits for the window to get it.
 - **The red frame is four layer surfaces outside the area.** The wlr-layer-shell protocol
   lets a surface sit at a fixed place above all windows, without taking clicks or keys.
   KDE Plasma, Sway, Hyprland and COSMIC support it. GNOME does not, and gets no frame:

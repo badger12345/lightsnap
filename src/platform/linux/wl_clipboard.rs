@@ -8,7 +8,9 @@
 //! focus, with the serial of a recent input event. LightSnap copies a screenshot right
 //! when the mouse is let go on its area selection, which has the focus then. This module
 //! listens to the seat on the main window's own Wayland connection (`attach`), so it
-//! has that serial, and serves the copied data until something else is copied.
+//! has that serial, and serves the copied data until something else is copied. Reading
+//! the clipboard needs the focus too: the compositor tells only the focused app what is
+//! on it.
 
 use std::io::Write;
 use std::os::fd::{AsRawFd, OwnedFd};
@@ -22,16 +24,27 @@ use wayland_client::protocol::{
 };
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum, event_created_child};
 
-/// What to put on the clipboard: the same bytes under several types.
+/// What to put on the clipboard: bytes per type.
 pub struct Offer {
-    pub mimes: Vec<String>,
-    pub data: Arc<Vec<u8>>,
+    pub items: Vec<(String, Arc<Vec<u8>>)>,
 }
 
-struct Request {
-    offer: Offer,
-    done: mpsc::SyncSender<bool>,
+impl Offer {
+    /// The same bytes under several types.
+    pub fn same(mimes: &[&str], data: Vec<u8>) -> Self {
+        let data = Arc::new(data);
+        Offer { items: mimes.iter().map(|m| (m.to_string(), data.clone())).collect() }
+    }
 }
+
+enum Request {
+    Set(Offer, mpsc::SyncSender<bool>),
+    /// Read the clipboard in the first of these types it has.
+    Read(Vec<String>, mpsc::SyncSender<Option<Vec<u8>>>),
+}
+
+/// The types an offer from another app has, filled as the compositor lists them.
+type OfferMimes = Arc<Mutex<Vec<String>>>;
 
 struct Attached {
     display: usize,
@@ -49,6 +62,12 @@ static FOCUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::n
 pub fn ready() -> bool {
     let needs_focus = ATTACHED.lock().ok().is_some_and(|g| g.as_ref().is_some_and(|a| !a.data_control));
     !needs_focus || FOCUSED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Like `ready`, but false until the main window's connection is known: before that it is
+/// not known yet whether the desktop needs the focus.
+pub fn ready_known() -> bool {
+    ATTACHED.lock().ok().is_some_and(|g| g.is_some()) && ready()
 }
 
 /// Starts listening on the main window's Wayland connection. Called every frame; does
@@ -94,10 +113,25 @@ pub fn set(offer: Offer) -> bool {
         }
     };
     let (done_tx, done_rx) = mpsc::sync_channel(1);
-    if tx.send(Request { offer, done: done_tx }).is_err() {
+    if tx.send(Request::Set(offer, done_tx)).is_err() {
         return false;
     }
     done_rx.recv_timeout(Duration::from_millis(500)).unwrap_or(false)
+}
+
+/// Reads the clipboard through Wayland, in the first of `mimes` it has, where that is the
+/// way (no data-control) and LightSnap has the focus. None means: nothing there, or use arboard.
+pub fn read(mimes: &[&str]) -> Option<Vec<u8>> {
+    let tx = {
+        let g = ATTACHED.lock().ok()?;
+        match g.as_ref() {
+            Some(a) if !a.data_control => a.tx.clone(),
+            _ => return None,
+        }
+    };
+    let (done_tx, done_rx) = mpsc::sync_channel(1);
+    tx.send(Request::Read(mimes.iter().map(|m| m.to_string()).collect(), done_tx)).ok()?;
+    done_rx.recv_timeout(Duration::from_secs(3)).ok().flatten()
 }
 
 struct State {
@@ -110,7 +144,9 @@ struct State {
     /// The serial of the newest input event on this app's surfaces.
     serial: Option<u32>,
     /// The data being served, with its source.
-    current: Option<(wl_data_source::WlDataSource, Arc<Vec<u8>>)>,
+    current: Option<(wl_data_source::WlDataSource, Vec<(String, Arc<Vec<u8>>)>)>,
+    /// What is on the clipboard now (told only while focused).
+    selection: Option<wl_data_offer::WlDataOffer>,
 }
 
 fn run(conn: Connection, rx: mpsc::Receiver<Request>, ready: &mpsc::SyncSender<Option<bool>>) -> Result<(), String> {
@@ -129,29 +165,56 @@ fn run(conn: Connection, rx: mpsc::Receiver<Request>, ready: &mpsc::SyncSender<O
         focused: false,
         serial: None,
         current: None,
+        selection: None,
     };
     queue.roundtrip(&mut st).map_err(|e| e.to_string())?;
     let _ = ready.try_send(Some(data_control));
     loop {
         while let Ok(req) = rx.try_recv() {
-            // Take in input events that winit read already, so the serial is current.
+            // Take in events that winit read already, so serial and selection are current.
             let rt = queue.roundtrip(&mut st);
             log::debug!(target: "lightsnap", "clipboard request: focused {} serial {:?} roundtrip {:?}", st.focused, st.serial, rt.is_ok());
-            let ok = match (st.focused, st.serial, &st.device) {
-                (true, Some(serial), Some(device)) => {
-                    let source = manager.create_data_source(&qh, ());
-                    for m in &req.offer.mimes {
-                        source.offer(m.clone());
-                    }
-                    device.set_selection(Some(&source), serial);
-                    if let Some((old, _)) = st.current.replace((source, req.offer.data)) {
-                        old.destroy();
-                    }
-                    conn.flush().is_ok()
+            match req {
+                Request::Set(offer, done) => {
+                    let ok = match (st.focused, st.serial, &st.device) {
+                        (true, Some(serial), Some(device)) => {
+                            let source = manager.create_data_source(&qh, ());
+                            for (m, _) in &offer.items {
+                                source.offer(m.clone());
+                            }
+                            device.set_selection(Some(&source), serial);
+                            if let Some((old, _)) = st.current.replace((source, offer.items)) {
+                                old.destroy();
+                            }
+                            conn.flush().is_ok()
+                        }
+                        _ => false,
+                    };
+                    let _ = done.send(ok);
                 }
-                _ => false,
-            };
-            let _ = req.done.send(ok);
+                Request::Read(wanted, done) => {
+                    let offer = st.selection.as_ref().filter(|_| st.focused);
+                    let have = offer.and_then(|o| o.data::<OfferMimes>()).and_then(|m| m.lock().ok().map(|m| m.clone()));
+                    let mime = have.and_then(|have| wanted.into_iter().find(|w| have.contains(w)));
+                    match (offer, mime) {
+                        (Some(offer), Some(mime)) => match receive(offer, &mime, &conn) {
+                            // Read in a thread: when LightSnap itself owns the clipboard,
+                            // this loop has to answer the request meanwhile.
+                            Some(file) => {
+                                std::thread::spawn(move || {
+                                    let _ = done.send(read_all(file));
+                                });
+                            }
+                            None => {
+                                let _ = done.send(None);
+                            }
+                        },
+                        _ => {
+                            let _ = done.send(None);
+                        }
+                    }
+                }
+            }
         }
         queue.dispatch_pending(&mut st).map_err(|e| e.to_string())?;
         conn.flush().map_err(|e| e.to_string())?;
@@ -162,6 +225,51 @@ fn run(conn: Connection, rx: mpsc::Receiver<Request>, ready: &mpsc::SyncSender<O
             if unsafe { libc::poll(&mut fd, 1, 50) } > 0 {
                 let _ = guard.read();
             }
+        }
+    }
+}
+
+/// Asks the owner of the clipboard to write it into a new pipe; returns the reading end.
+fn receive(offer: &wl_data_offer::WlDataOffer, mime: &str, conn: &Connection) -> Option<std::fs::File> {
+    use std::os::fd::{AsFd, FromRawFd};
+    let mut fds = [0; 2];
+    // SAFETY: pipe2 fills two new fds, which are owned right after.
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return None;
+    }
+    // SAFETY: both fds are new and owned only here.
+    let (r, w) = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+    offer.receive(mime.to_string(), w.as_fd());
+    conn.flush().ok()?;
+    // Close our writing end, so the read ends when the owner closes theirs.
+    drop(w);
+    Some(std::fs::File::from(r))
+}
+
+/// Reads a pipe to its end, at most 10 s and 100 MB.
+fn read_all(mut f: std::fs::File) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let start = std::time::Instant::now();
+    let mut out = Vec::new();
+    let mut buf = [0u8; 65536];
+    loop {
+        let mut p = libc::pollfd { fd: f.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+        // SAFETY: one valid pollfd.
+        if unsafe { libc::poll(&mut p, 1, 1000) } <= 0 {
+            if start.elapsed() > Duration::from_secs(10) {
+                return None;
+            }
+            continue;
+        }
+        match f.read(&mut buf) {
+            Ok(0) => return (!out.is_empty()).then_some(out),
+            Ok(n) => {
+                out.extend_from_slice(&buf[..n]);
+                if out.len() > 100 << 20 {
+                    return None;
+                }
+            }
+            Err(_) => return None,
         }
     }
 }
@@ -256,29 +364,44 @@ impl Dispatch<wl_data_device_manager::WlDataDeviceManager, ()> for State {
 }
 
 impl Dispatch<wl_data_device::WlDataDevice, ()> for State {
-    fn event(_: &mut Self, _: &wl_data_device::WlDataDevice, ev: wl_data_device::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
-        // Offers from other apps are not read here (arboard reads the clipboard).
-        if let wl_data_device::Event::Selection { id: Some(offer) } = ev {
-            offer.destroy();
+    fn event(st: &mut Self, _: &wl_data_device::WlDataDevice, ev: wl_data_device::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        match ev {
+            // What is on the clipboard now; the old offer is no longer valid.
+            wl_data_device::Event::Selection { id } => {
+                if let Some(old) = std::mem::replace(&mut st.selection, id) {
+                    old.destroy();
+                }
+            }
+            // Drag and drop is not used: let go of its offers.
+            wl_data_device::Event::Enter { id: Some(offer), .. } => offer.destroy(),
+            _ => {}
         }
     }
 
     event_created_child!(State, wl_data_device::WlDataDevice, [
-        wl_data_device::EVT_DATA_OFFER_OPCODE => (wl_data_offer::WlDataOffer, ()),
+        wl_data_device::EVT_DATA_OFFER_OPCODE => (wl_data_offer::WlDataOffer, OfferMimes::default()),
     ]);
 }
 
-impl Dispatch<wl_data_offer::WlDataOffer, ()> for State {
-    fn event(_: &mut Self, _: &wl_data_offer::WlDataOffer, _: wl_data_offer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+impl Dispatch<wl_data_offer::WlDataOffer, OfferMimes> for State {
+    fn event(_: &mut Self, _: &wl_data_offer::WlDataOffer, ev: wl_data_offer::Event, mimes: &OfferMimes, _: &Connection, _: &QueueHandle<Self>) {
+        if let wl_data_offer::Event::Offer { mime_type } = ev {
+            if let Ok(mut m) = mimes.lock() {
+                m.push(mime_type);
+            }
+        }
+    }
 }
 
 impl Dispatch<wl_data_source::WlDataSource, ()> for State {
     fn event(st: &mut Self, source: &wl_data_source::WlDataSource, ev: wl_data_source::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
         match ev {
-            wl_data_source::Event::Send { fd, .. } => {
-                if let Some((s, data)) = &st.current {
+            wl_data_source::Event::Send { fd, mime_type } => {
+                if let Some((s, items)) = &st.current {
                     if s == source {
-                        serve(fd, data.clone());
+                        if let Some((_, data)) = items.iter().find(|(m, _)| *m == mime_type) {
+                            serve(fd, data.clone());
+                        }
                     }
                 }
             }

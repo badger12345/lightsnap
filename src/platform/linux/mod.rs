@@ -14,6 +14,7 @@ mod rec_frame;
 mod recording;
 mod system;
 mod tray;
+mod windows;
 mod wl_clipboard;
 
 pub use capture::*;
@@ -23,6 +24,7 @@ pub use rec_frame::*;
 pub use recording::*;
 pub use system::*;
 pub use tray::*;
-pub use wl_clipboard::{attach as attach_clipboard, ready as clipboard_ready};
+pub use windows::*;
+pub use wl_clipboard::{attach as attach_clipboard, ready as clipboard_ready, ready_known as clipboard_ready_known};
 
 use super::{APP_ID, OLD_APP_ID};

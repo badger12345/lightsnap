@@ -114,8 +114,10 @@ Capture Area works as on macOS: the screen freezes, you drag a frame, and when y
 the picture is taken (and copied). No button, no Enter. With several screens the area is
 chosen on the screen the desktop opens LightSnap on, usually the one with the mouse; a frame
 can't reach across two screens. Capture Fullscreen and Timed Capture take that whole
-screen. Capture Window uses your desktop's own picker (GNOME may ask once whether
-LightSnap may take screenshots). While recording,
+screen. Capture Window on KDE Plasma works as on macOS too: the window under the mouse is
+highlighted, a click takes it. Other desktops don't tell apps where windows are, so there
+Capture Window uses the desktop's own picker (GNOME may ask once whether LightSnap may take
+screenshots). While recording,
 LightSnap has no window: stop or pause it from the tray icon or with the shortcut. On KDE
 Plasma, Sway, Hyprland and COSMIC a red frame shows the recorded area, as on macOS (orange
 while paused), and the recording starts right away. GNOME does not let apps draw such a

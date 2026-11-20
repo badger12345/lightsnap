@@ -56,6 +56,9 @@ pub(super) struct Select {
     /// needs the focus to set the clipboard on GNOME). The area, or the whole screen the
     /// window is on. The window shows the frozen picture undimmed, so it is not seen.
     pub(super) instant: Option<(Instant, Option<Rect>)>,
+    /// Linux "Capture Window" (KDE): the windows, top-most first. A click takes the one under
+    /// the mouse, as `screencapture -w` on macOS.
+    pub(super) windows: Vec<Rect>,
 }
 
 /// Linux: how long the chosen area is shown before the recording starts.
@@ -184,9 +187,16 @@ impl LightSnap {
         // no area at all (KDE). Full-screen and timed captures go the same way, with a window
         // that takes the picture at once: on GNOME only a focused window can set the
         // clipboard without XWayland.
+        #[cfg(target_os = "linux")]
+        let lists_windows = platform::can_list_windows();
+        #[cfg(not(target_os = "linux"))]
+        let lists_windows = false;
         let select_shot = cfg!(target_os = "linux")
             && !for_record
-            && matches!(kind, CaptureKind::Area | CaptureKind::Previous | CaptureKind::FullScreen | CaptureKind::Timed(_));
+            && (matches!(kind, CaptureKind::Area | CaptureKind::Previous | CaptureKind::FullScreen | CaptureKind::Timed(_))
+                || (kind == CaptureKind::Window && lists_windows));
+        let windows = Arc::new(Mutex::new(Vec::new()));
+        let windows2 = windows.clone();
         if for_record {
             if let Some(ff) = self.ffmpeg.clone() {
                 let slot = self.devices.clone();
@@ -209,17 +219,26 @@ impl LightSnap {
             if let (true, CaptureKind::Timed(s)) = (select_shot, kind) {
                 std::thread::sleep(Duration::from_secs(s as u64));
             }
+            // Before the picture: LightSnap's own window is not open yet.
+            #[cfg(target_os = "linux")]
+            if select_shot && kind == CaptureKind::Window {
+                if let Ok(mut w) = windows2.lock() {
+                    *w = platform::window_rects();
+                }
+            }
+            let _ = &windows2;
             let r = if for_record || select_shot {
-                // A frozen picture of every screen to choose the area on. Screenshots leave
-                // the mouse pointer out, as on macOS.
-                platform::capture_all_screens(platform::displays().len(), cursor && !select_shot)
+                // A frozen picture of every screen to choose the area on. Area screenshots
+                // leave the mouse pointer out, as on macOS; full-screen ones follow the setting.
+                let choosing = select_shot && matches!(kind, CaptureKind::Area | CaptureKind::Previous | CaptureKind::Window);
+                platform::capture_all_screens(platform::displays().len(), cursor && !choosing)
             } else {
                 platform::run_capture(kind, sound).into_iter().collect()
             };
             let _ = tx.send(r);
             ctx2.request_repaint();
         });
-        self.job = Some(Job { rx, kind, for_record, select_shot, show_after: was_visible });
+        self.job = Some(Job { rx, kind, for_record, select_shot, show_after: was_visible, windows });
     }
 
     pub(super) fn handle_capture(&mut self, ctx: &egui::Context, path: PathBuf, show_after: bool) {
@@ -317,8 +336,9 @@ impl LightSnap {
         let settings = &mut self.settings;
         let devices = &self.devices;
         let has_ff = self.ffmpeg.is_some();
-        let Select { screens, rect, before_full, drag, settings_open, focused, countdown, shot, shown, instant, placed, .. } = sel;
+        let Select { screens, rect, before_full, drag, settings_open, focused, countdown, shot, shown, instant, placed, windows, .. } = sel;
         let (instant, placed) = (*instant, *placed);
+        let windows: &[Rect] = windows;
         let shown = *shown;
         let shot_mode = shot.is_some();
         let all = screens.iter().fold(Rect::NOTHING, |a, s| a.union(s.bounds));
@@ -438,6 +458,19 @@ impl LightSnap {
                     }
                 }
                 let mut shot_taken = None;
+                // "Capture Window": the window under the mouse, cut to this screen.
+                let hovered_window = if shot_mode && drag.is_none() {
+                    resp.hover_pos()
+                        .map(|p| p + offset)
+                        .and_then(|p| windows.iter().find(|w| w.contains(p)))
+                        .map(|w| w.intersect(scr.bounds))
+                        .filter(|w| w.is_positive())
+                } else {
+                    None
+                };
+                if let (true, Some(w)) = (resp.clicked(), hovered_window) {
+                    shot_taken = Some(w);
+                }
                 if resp.drag_stopped() {
                     *drag = None;
                     let min = if shot_mode { 3.0 } else { 16.0 };
@@ -467,7 +500,7 @@ impl LightSnap {
                 // Dim everything outside the area.
                 let dim = Color32::from_black_alpha(120);
                 let mut out = SelectOut::None;
-                match *rect {
+                match hovered_window.or(*rect) {
                     Some(r) => {
                         let lr = to_local(r);
                         for d in [
@@ -535,7 +568,9 @@ impl LightSnap {
                     None => {
                         painter.rect_filled(full, 0.0, dim);
                         if si == mouse_i {
-                            let msg = if shot_mode {
+                            let msg = if shot_mode && !windows.is_empty() {
+                                "Click a window   ·   Drag for an area   ·   Esc: cancel"
+                            } else if shot_mode {
                                 "Drag to choose the area   ·   Enter: whole screen   ·   Esc: cancel"
                             } else {
                                 "Drag to choose the area to record   ·   Enter: whole screen   ·   Esc: cancel"
