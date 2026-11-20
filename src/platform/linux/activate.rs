@@ -4,6 +4,7 @@
 //! with a tray click or a shortcut press, and an app may pass it on to a window. A new
 //! window gets it from `XDG_ACTIVATION_TOKEN` (see `main.rs`); winit has no call for a
 //! window that is already open, so this sends the token on winit's own connection.
+//! KDE's shortcut portal sends no token; there a KWin script does it.
 
 use wayland_backend::client::{Backend, ObjectId};
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
@@ -12,10 +13,14 @@ use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
 use wayland_protocols::xdg::activation::v1::client::xdg_activation_v1::{self, XdgActivationV1};
 
 /// Brings `window` to the front with the token of a tray click or shortcut from the last
-/// seconds. Does nothing without one.
+/// seconds. Without one (shortcuts on KDE) KWin is asked through a script; elsewhere
+/// nothing happens.
 pub fn activate(window: &winit::window::Window) {
     use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
-    let Some(token) = super::take_activation_token() else { return };
+    let Some(token) = super::take_activation_token() else {
+        super::kwin_activate_main();
+        return;
+    };
     let (Ok(d), Ok(w)) = (window.display_handle(), window.window_handle()) else { return };
     let (RawDisplayHandle::Wayland(d), RawWindowHandle::Wayland(w)) = (d.as_raw(), w.as_raw()) else { return };
     // SAFETY: display and surface belong to winit's window, which lives for this call.

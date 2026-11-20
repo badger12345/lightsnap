@@ -519,7 +519,8 @@ impl eframe::App for LightSnap {
             self.place_selection(_frame);
             if let Some(w) = _frame.winit_window() {
                 platform::attach_clipboard(w);
-                if std::mem::take(&mut self.raise) {
+                let focused = ctx.input(|i| i.viewport().focused) == Some(true);
+                if std::mem::take(&mut self.raise) && !focused {
                     platform::activate(w);
                 }
             }

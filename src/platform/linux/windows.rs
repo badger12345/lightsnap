@@ -70,21 +70,9 @@ for (const w of workspace.stackingOrder) {{
 callDBus("{me}", "{PATH}", "{IFACE}", "Report", JSON.stringify(out));
 "#
     );
-    let file = crate::platform::temp_file("windows", "js");
-    std::fs::write(&file, script).map_err(|e| e.to_string())?;
-    let name = format!("lightsnap-windows-{}", std::process::id());
-    let scripting = zbus::Proxy::new(&conn, "org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting").await.map_err(|e| e.to_string())?;
-    // A script of the same name left from before would block loading.
-    let _: Result<bool, _> = scripting.call("unloadScript", &(name.as_str(),)).await;
-    let id: i32 = scripting.call("loadScript", &(file.display().to_string(), name.as_str())).await.map_err(|e| e.to_string())?;
-    let script_path = format!("/Scripting/Script{id}");
-    let script_obj = zbus::Proxy::new(&conn, "org.kde.KWin", script_path.as_str(), "org.kde.kwin.Script").await.map_err(|e| e.to_string())?;
-    let run: Result<(), _> = script_obj.call("run", &()).await;
+    run_script(&conn, "windows", &script).await?;
     // The answer comes as a call to us, served by the connection's own task.
     let json = blocking_recv(rx, Duration::from_secs(1));
-    let _: Result<bool, _> = scripting.call("unloadScript", &(name.as_str(),)).await;
-    let _ = std::fs::remove_file(&file);
-    run.map_err(|e| e.to_string())?;
     let json = json.ok_or("KWin did not answer")?;
     let wins: Vec<Win> = serde_json::from_str(&json).map_err(|e| e.to_string())?;
     Ok(wins
@@ -93,6 +81,53 @@ callDBus("{me}", "{PATH}", "{IFACE}", "Report", JSON.stringify(out));
         .filter(|w| w.w >= 1.0 && w.h >= 1.0)
         .map(|w| Rect::from_min_size(pos2(w.x, w.y), vec2(w.w, w.h)))
         .collect())
+}
+
+/// Runs a one-shot KWin script.
+async fn run_script(conn: &zbus::Connection, what: &str, script: &str) -> Result<(), String> {
+    let file = crate::platform::temp_file(what, "js");
+    std::fs::write(&file, script).map_err(|e| e.to_string())?;
+    let name = format!("lightsnap-{what}-{}", std::process::id());
+    let scripting = zbus::Proxy::new(conn, "org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting").await.map_err(|e| e.to_string())?;
+    // A script of the same name left from before would block loading.
+    let _: Result<bool, _> = scripting.call("unloadScript", &(name.as_str(),)).await;
+    let id: i32 = scripting.call("loadScript", &(file.display().to_string(), name.as_str())).await.map_err(|e| e.to_string())?;
+    let script_path = format!("/Scripting/Script{id}");
+    let script_obj = zbus::Proxy::new(conn, "org.kde.KWin", script_path.as_str(), "org.kde.kwin.Script").await.map_err(|e| e.to_string())?;
+    let run: Result<(), _> = script_obj.call("run", &()).await;
+    let _: Result<bool, _> = scripting.call("unloadScript", &(name.as_str(),)).await;
+    let _ = std::fs::remove_file(&file);
+    run.map_err(|e| e.to_string())
+}
+
+/// KDE: puts LightSnap's main window in front through a KWin script. For shortcuts, whose
+/// portal sends no activation token on KDE. In the background; does nothing elsewhere.
+pub fn kwin_activate_main() {
+    if !can_list_windows() {
+        return;
+    }
+    let script = format!(
+        r#"let main = null;
+for (const w of workspace.stackingOrder) {{
+  if (w.pid === {pid} && w.normalWindow && !w.caption.startsWith("LightSnap | ")) main = w;
+}}
+if (main) {{
+  main.minimized = false;
+  workspace.activeWindow = main;
+}}
+"#,
+        pid = std::process::id()
+    );
+    std::thread::spawn(move || {
+        let res = pollster::block_on(async {
+            let conn = zbus::Connection::session().await.map_err(|e| e.to_string())?;
+            run_script(&conn, "activate", &script).await
+        });
+        match res {
+            Ok(()) => log::info!(target: "lightsnap", "main window activated through KWin"),
+            Err(e) => log::warn!(target: "lightsnap", "KWin activation: {e}"),
+        }
+    });
 }
 
 /// Waits for the answer without blocking the async executor's other work for long.
