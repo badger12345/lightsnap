@@ -173,6 +173,37 @@ pub fn main_window_open(open: bool) {
     WINDOW_OPEN.store(open, Ordering::Relaxed);
 }
 
+/// Stops the streams that don't show the screen `bounds`: a recording needs only one, and
+/// every running stream costs the compositor and LightSnap a copy of each frame. The
+/// screens stay listed (`shared_rects`) so the recording still finds its screen.
+pub fn keep_only_screen(bounds: egui::Rect) {
+    let Some(cut) = locate(bounds, &super::displays()) else { return };
+    let mut stopped = Vec::new();
+    if let Ok(mut cast) = CAST.lock() {
+        let Some(c) = cast.as_mut() else { return };
+        for (i, s) in c.sources.iter_mut().enumerate() {
+            if i == cut.source {
+                continue;
+            }
+            let _ = s.stop.send(());
+            if let Some(t) = s.thread.take() {
+                stopped.push((t, s.frame.clone()));
+            }
+        }
+    }
+    let n = stopped.len();
+    for (t, frame) in stopped {
+        let _ = t.join();
+        // Free the last picture; the stream is gone, so none comes after it.
+        if let Ok(mut f) = frame.lock() {
+            *f = None;
+        }
+    }
+    if n > 0 {
+        log::info!(target: "lightsnap", "recording screen at {:?}: stopped {n} other stream(s)", bounds.min);
+    }
+}
+
 /// What the shared streams show, in points on the desktop. Empty while nothing is shared,
 /// and when the portal did not say (then the one stream is the first screen).
 pub(super) fn shared_rects() -> Vec<egui::Rect> {
@@ -214,7 +245,8 @@ fn locate(bounds: egui::Rect, screens: &[crate::platform::Display]) -> Option<Cu
             .collect()
     };
     for (i, r) in rects.iter().enumerate() {
-        let f = latest_frame(i)?;
+        // A stopped stream (see `keep_only_screen`) has no frame.
+        let Some(f) = latest_frame(i) else { continue };
         let r = match r {
             Some(r) => *r,
             // Without a position from the portal: a stream shaped like the whole desktop is

@@ -612,6 +612,8 @@ impl LightSnap {
             clicks: self.settings.capture_clicks,
             audio,
         };
+        #[cfg(target_os = "linux")]
+        platform::keep_only_screen(screen_bounds);
         match Recorder::start(opts, self.ffmpeg.clone(), &devices) {
             Ok(rec) => {
                 self.rec_started_name = self.settings.make_name("Screencast");

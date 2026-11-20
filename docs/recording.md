@@ -126,8 +126,9 @@ quality settings). Linux cannot record without ffmpeg.
   frame only when the screen changes. The writer repeats the newest frame `fps` times a
   second, so the video has an even frame rate.
 - **The screens stay shared from the still pictures to the end of the recording.** The
-  person picks them once, and the recording starts at once. The recording feeds only the
-  screen that holds the area into ffmpeg.
+  person picks them once, and the recording starts at once. When the recording starts,
+  the streams that don't show its screen stop (`keep_only_screen`): each running stream
+  costs a copy of every frame.
 - **The area is chosen in the full-screen main window.** Wayland can neither place windows
   nor reliably put a new one in front, and it tells no app where the mouse is. The window
   goes full screen where the compositor opens it (usually the screen with the mouse) and

@@ -1644,6 +1644,7 @@ dependencies = [
  "smithay-client-toolkit",
  "tiny-skia",
  "tray-icon",
+ "wayland-backend",
  "wayland-client",
  "winit",
  "zbus 6.3.0",

@@ -1,6 +1,7 @@
-//! The clipboard, through arboard (Wayland data-control, else XWayland). The clipboard
-//! object stays alive: on Linux the copied data is served by this app until something
-//! else is copied.
+//! The clipboard, through arboard (Wayland data-control, else XWayland). On GNOME, which
+//! has no data-control, copying goes through plain Wayland while LightSnap has the focus
+//! (see `wl_clipboard`), and through arboard only otherwise. The clipboard objects stay
+//! alive: on Linux the copied data is served by this app until something else is copied.
 
 use std::path::Path;
 use std::sync::Mutex;
@@ -15,9 +16,20 @@ fn with<R>(f: impl FnOnce(&mut arboard::Clipboard) -> Option<R>) -> Option<R> {
     f(g.as_mut()?)
 }
 
+const TEXT_MIMES: [&str; 5] = ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain", "TEXT", "STRING"];
+
+fn wayland_text(text: &str) -> bool {
+    super::wl_clipboard::set(super::wl_clipboard::Offer {
+        mimes: TEXT_MIMES.iter().map(|m| m.to_string()).collect(),
+        data: std::sync::Arc::new(text.as_bytes().to_vec()),
+    })
+}
+
 /// Copies plain text to the clipboard.
 pub fn copy_text(text: &str) {
-    with(|c| c.set_text(text).ok());
+    if !wayland_text(text) {
+        with(|c| c.set_text(text).ok());
+    }
 }
 
 /// Writes the picture on the clipboard to a PNG file. Returns false if there is none.
@@ -33,6 +45,12 @@ pub fn clipboard_png_to_file(dest: &Path) -> bool {
 /// the other, so the picture wins. `tiff` is a macOS option and ignored here.
 pub fn set_clipboard(png: Option<&Path>, _tiff: bool, path: Option<&Path>) -> bool {
     if let Some(png) = png {
+        if let Ok(bytes) = std::fs::read(png) {
+            let offer = super::wl_clipboard::Offer { mimes: vec!["image/png".into()], data: std::sync::Arc::new(bytes) };
+            if super::wl_clipboard::set(offer) {
+                return true;
+            }
+        }
         if let Ok(img) = image::open(png) {
             let img = img.to_rgba8();
             let data = arboard::ImageData {
@@ -44,7 +62,7 @@ pub fn set_clipboard(png: Option<&Path>, _tiff: bool, path: Option<&Path>) -> bo
         }
     }
     match path {
-        Some(p) => with(|c| c.set_text(p.display().to_string()).ok()).is_some(),
+        Some(p) => wayland_text(&p.display().to_string()) || with(|c| c.set_text(p.display().to_string()).ok()).is_some(),
         None => false,
     }
 }

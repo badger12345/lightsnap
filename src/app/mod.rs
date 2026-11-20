@@ -503,7 +503,12 @@ impl LightSnap {
 impl eframe::App for LightSnap {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(target_os = "linux")]
-        self.place_selection(_frame);
+        {
+            self.place_selection(_frame);
+            if let Some(w) = _frame.winit_window() {
+                platform::attach_clipboard(w);
+            }
+        }
         // Remember the screen size while the main window is around.
         if let Some(m) = ctx.input(|i| i.viewport().monitor_size) {
             if m.x > 100.0 {
