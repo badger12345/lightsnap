@@ -36,6 +36,27 @@ delegate_registry!(State);
 
 /// All screens, the one at the top-left corner of the desktop first.
 pub fn displays() -> Vec<Display> {
+    let mut list: Vec<Display> = outputs().into_iter().map(|(d, _)| d).collect();
+    list.sort_by(|a, b| (a.bounds.min.x + a.bounds.min.y).total_cmp(&(b.bounds.min.x + b.bounds.min.y)));
+    // While a screen is shared for recording, it comes first: it is screen 0 to the recorder.
+    if let Some((x, y)) = super::recording::shared_screen_position() {
+        if let Some(i) = list.iter().position(|d| d.bounds.min == pos2(x as f32, y as f32)) {
+            let d = list.remove(i);
+            list.insert(0, d);
+        }
+    }
+    list
+}
+
+/// The name of the shared screen ("DP-1"), as the compositor calls it. The area is chosen
+/// in a window full screen on that screen: it shows that screen's frozen picture.
+pub fn shared_output_name() -> Option<String> {
+    let (x, y) = super::recording::shared_screen_position()?;
+    outputs().into_iter().find(|(d, _)| d.bounds.min == pos2(x as f32, y as f32)).and_then(|(_, n)| n)
+}
+
+/// The screens with their names, in the compositor's order.
+fn outputs() -> Vec<(Display, Option<String>)> {
     let Ok(conn) = Connection::connect_to_env() else { return Vec::new() };
     let Ok((globals, mut queue)) = registry_queue_init::<State>(&conn) else { return Vec::new() };
     let qh = queue.handle();
@@ -46,8 +67,7 @@ pub fn displays() -> Vec<Display> {
             return Vec::new();
         }
     }
-    let mut list: Vec<Display> = st
-        .outputs
+    st.outputs
         .outputs()
         .filter_map(|o| st.outputs.info(&o))
         .map(|info| {
@@ -61,22 +81,14 @@ pub fn displays() -> Vec<Display> {
                 Some((pw, _)) if lw > 0 => pw as f32 / lw as f32,
                 _ => info.scale_factor.max(1) as f32,
             };
-            Display {
+            let d = Display {
                 bounds: Rect::from_min_size(pos2(x as f32, y as f32), vec2(lw as f32, lh as f32)),
                 scale,
-            }
+            };
+            (d, info.name.clone())
         })
-        .filter(|d| d.bounds.width() > 0.0)
-        .collect();
-    list.sort_by(|a, b| (a.bounds.min.x + a.bounds.min.y).total_cmp(&(b.bounds.min.x + b.bounds.min.y)));
-    // While a screen is shared for recording, it comes first: it is screen 0 to the recorder.
-    if let Some((x, y)) = super::recording::shared_screen_position() {
-        if let Some(i) = list.iter().position(|d| d.bounds.min == pos2(x as f32, y as f32)) {
-            let d = list.remove(i);
-            list.insert(0, d);
-        }
-    }
-    list
+        .filter(|(d, _)| d.bounds.width() > 0.0)
+        .collect()
 }
 
 /// Wayland does not share the mouse position outside LightSnap's own windows.

@@ -73,7 +73,7 @@ pub(super) fn capture_menu(ui: &mut Ui, st: &Settings) -> Option<Action> {
     if row(ui, "Capture Area", "area") {
         a = Some(Action::Capture(CaptureKind::Area));
     }
-    if cfg!(target_os = "macos") && row(ui, "Capture Previous Area", "previous") {
+    if row(ui, "Capture Previous Area", "previous") {
         a = Some(Action::Capture(CaptureKind::Previous));
     }
     if row(ui, "Capture Full Screen", "full") {

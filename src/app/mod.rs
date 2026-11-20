@@ -109,6 +109,8 @@ struct Job {
     /// The captured picture(s): one per screen when preparing a recording; empty if cancelled.
     rx: Receiver<Vec<PathBuf>>,
     for_record: bool,
+    /// Linux: the picture is for choosing a screenshot area in LightSnap (see `start_capture`).
+    select_shot: bool,
     show_after: bool,
 }
 
@@ -171,6 +173,9 @@ pub struct LightSnap {
     /// Show the note that asks to allow screenshots (Linux, see `permission_prompt`).
     perm_prompt: bool,
     perm_asking: bool,
+    /// Linux: the area of the last area screenshot, for "Capture Previous Area" (global points).
+    /// macOS keeps it in `platform`.
+    last_area: Option<Rect>,
 }
 
 impl LightSnap {
@@ -224,6 +229,7 @@ impl LightSnap {
             pending_pos: None,
             resent: 0,
             perm_prompt: false,
+            last_area: None,
             perm_asking: false,
         };
         app.refresh_screen();
@@ -453,6 +459,32 @@ impl LightSnap {
         ctx.set_glyph_rasterizers(Vec::new());
     }
 
+    /// Linux: the area is chosen on the shared screen's frozen picture, in the main window
+    /// full screen. The compositor opens it where the mouse or focus is, which may be another
+    /// screen: move it to the shared one, once per selection.
+    #[cfg(target_os = "linux")]
+    fn place_selection(&mut self, frame: &eframe::Frame) {
+        let Some(sel) = &mut self.select else { return };
+        if sel.placed {
+            return;
+        }
+        let Some(win) = frame.winit_window() else { return };
+        // Until the window is on a screen, the compositor has not chosen one yet.
+        let Some(current) = win.current_monitor() else { return };
+        sel.placed = true;
+        let Some(target) = platform::shared_output_name() else { return };
+        if current.name().as_deref() == Some(target.as_str()) {
+            return;
+        }
+        if let Some(m) = win.available_monitors().find(|m| m.name().as_deref() == Some(target.as_str())) {
+            log::info!(target: "lightsnap", "selection opened on {:?}, moving it to the shared screen {target}", current.name());
+            // KWin keeps a window that is already full screen where it is: leave full screen
+            // first, then ask for it on the shared screen.
+            win.set_fullscreen(None);
+            win.set_fullscreen(Some(winit::window::Fullscreen::Borderless(Some(m))));
+        }
+    }
+
     fn busy(&self) -> bool {
         self.job.is_some() || self.select.is_some() || self.recording.is_some() || self.finishing.is_some()
     }
@@ -460,6 +492,8 @@ impl LightSnap {
 
 impl eframe::App for LightSnap {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(target_os = "linux")]
+        self.place_selection(_frame);
         // Remember the screen size while the main window is around.
         if let Some(m) = ctx.input(|i| i.viewport().monitor_size) {
             if m.x > 100.0 {
@@ -599,8 +633,53 @@ impl eframe::App for LightSnap {
                 ctx.request_repaint_after(Duration::from_millis(100));
             }
         }
+        // Linux: without a red frame during the recording (GNOME), a countdown shows the area first.
+        #[cfg(target_os = "linux")]
+        let framed = platform::frame_supported();
+        #[cfg(not(target_os = "linux"))]
+        let framed = true;
         match sel_out {
             SelectOut::None => {}
+            SelectOut::Cancel if selecting_in_root && self.select.as_ref().is_some_and(|s| s.shot == Some(false)) => {
+                // A cancelled screenshot leaves no window behind.
+                self.select = None;
+                platform::end_screen_session();
+                self.visible = true;
+                self.hide_window(&ctx);
+            }
+            SelectOut::Shot(r) => {
+                let sel = self.select.take();
+                platform::end_screen_session();
+                let show_after = sel.as_ref().and_then(|s| s.shot).unwrap_or(false);
+                let path = sel.as_ref().and_then(|s| capture::crop_screens(&s.screens, r));
+                self.visible = false;
+                match path {
+                    Some(p) => {
+                        self.last_area = Some(r);
+                        self.handle_capture(&ctx, p, show_after);
+                    }
+                    None => {
+                        self.show_window(&ctx);
+                        self.toast("Could not read the screen.", None);
+                    }
+                }
+                if selecting_in_root {
+                    if self.visible {
+                        // The editor (or the window that was open) takes over the main window.
+                        ctx.send_viewport_cmd(ViewportCommand::Fullscreen(false));
+                        ctx.send_viewport_cmd(ViewportCommand::Decorations(true));
+                        #[cfg(target_os = "linux")]
+                        let size = self.open_size();
+                        #[cfg(not(target_os = "linux"))]
+                        let size = self.window_size();
+                        ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
+                    } else {
+                        // Copy only: the selection window just goes away.
+                        self.visible = true;
+                        self.hide_window(&ctx);
+                    }
+                }
+            }
             SelectOut::Cancel => {
                 self.select = None;
                 platform::end_screen_session();
@@ -612,7 +691,7 @@ impl eframe::App for LightSnap {
                 }
                 self.show_window(&ctx);
             }
-            SelectOut::Record(r) if selecting_in_root && self.select.as_ref().is_some_and(|s| s.countdown.is_none()) => {
+            SelectOut::Record(r) if selecting_in_root && !framed && self.select.as_ref().is_some_and(|s| s.countdown.is_none()) => {
                 // Show the area a moment with a countdown, then record.
                 if let Some(s) = &mut self.select {
                     s.rect = Some(r);

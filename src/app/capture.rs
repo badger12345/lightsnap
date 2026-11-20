@@ -27,8 +27,8 @@ pub(super) struct SelScreen {
     pub(super) tex: Option<TextureHandle>,
 }
 
-/// Choosing the area to record. One overlay window per screen; the area is in global
-/// points, so it can be dragged from one screen to another.
+/// Choosing the area to record, or on Linux the area of a screenshot. One overlay window
+/// per screen; the area is in global points, so it can be dragged from one screen to another.
 pub(super) struct Select {
     pub(super) screens: Vec<SelScreen>,
     pub(super) rect: Option<Rect>,
@@ -43,6 +43,13 @@ pub(super) struct Select {
     /// (a plain Wayland window can't frame the area during the recording; GNOME shows no
     /// frame at all).
     pub(super) countdown: Option<Instant>,
+    /// Linux: choosing the area of a screenshot, not of a recording. Holds whether the
+    /// window was open before (it opens again afterwards). As with `screencapture -i` on
+    /// macOS, the picture is taken when the mouse is let go: no button, no Enter.
+    pub(super) shot: Option<bool>,
+    /// Linux: the full-screen window was put on the shared screen (see `place_selection`).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(super) placed: bool,
 }
 
 /// Linux: how long the chosen area is shown before the recording starts.
@@ -54,6 +61,34 @@ pub(super) enum SelectOut {
     None,
     Cancel,
     Record(Rect),
+    /// Linux: take this area of the frozen picture as the screenshot.
+    Shot(Rect),
+}
+
+/// Linux: the area `r` (global points) of the frozen pictures as a PNG in the temp folder.
+pub(super) fn crop_screens(screens: &[SelScreen], r: Rect) -> Option<PathBuf> {
+    let list: Vec<platform::Display> = screens.iter().map(|s| platform::Display { bounds: s.bounds, scale: s.scale }).collect();
+    if list.is_empty() {
+        return None;
+    }
+    let scr = &screens[platform::display_index_at(&list, r.center())];
+    let img = scr.img.as_ref()?;
+    let r = r.intersect(scr.bounds);
+    let (iw, ih) = (img.size[0] as u32, img.size[1] as u32);
+    let px = |v: f32, max: u32| (v * scr.scale).round().clamp(0.0, max as f32) as u32;
+    let (x0, y0) = (px(r.min.x - scr.bounds.min.x, iw), px(r.min.y - scr.bounds.min.y, ih));
+    let (x1, y1) = (px(r.max.x - scr.bounds.min.x, iw), px(r.max.y - scr.bounds.min.y, ih));
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    let mut out = image::RgbaImage::new(x1 - x0, y1 - y0);
+    for (x, y, p) in out.enumerate_pixels_mut() {
+        let c = img.pixels[((y0 + y) * iw + x0 + x) as usize];
+        *p = image::Rgba(c.to_srgba_unmultiplied());
+    }
+    let path = platform::temp_file("shot", "png");
+    out.save(&path).ok()?;
+    Some(path)
 }
 
 pub(super) struct RecState {
@@ -138,6 +173,10 @@ impl LightSnap {
         // (macOS can open it at launch), so the flag alone is not enough.
         let was_visible = self.visible || ctx.input(|i| i.viewport().occluded == Some(false));
         self.hide_window(ctx);
+        // Linux: an area is chosen in LightSnap itself, on a frozen picture of the screen, as
+        // for recordings. The desktop's own pickers ask for an extra click (GNOME) or offer
+        // no area at all (KDE).
+        let select_shot = cfg!(target_os = "linux") && !for_record && matches!(kind, CaptureKind::Area | CaptureKind::Previous);
         if for_record {
             if let Some(ff) = self.ffmpeg.clone() {
                 let slot = self.devices.clone();
@@ -157,16 +196,17 @@ impl LightSnap {
             if was_visible {
                 std::thread::sleep(Duration::from_millis(350));
             }
-            let r = if for_record {
-                // A frozen picture of every screen to choose the area on.
-                platform::capture_all_screens(platform::displays().len(), cursor)
+            let r = if for_record || select_shot {
+                // A frozen picture of every screen to choose the area on. Screenshots leave
+                // the mouse pointer out, as on macOS.
+                platform::capture_all_screens(platform::displays().len(), cursor && !select_shot)
             } else {
                 platform::run_capture(kind, sound).into_iter().collect()
             };
             let _ = tx.send(r);
             ctx2.request_repaint();
         });
-        self.job = Some(Job { rx, kind, for_record, show_after: was_visible });
+        self.job = Some(Job { rx, kind, for_record, select_shot, show_after: was_visible });
     }
 
     pub(super) fn handle_capture(&mut self, ctx: &egui::Context, path: PathBuf, show_after: bool) {
@@ -264,7 +304,8 @@ impl LightSnap {
         let settings = &mut self.settings;
         let devices = &self.devices;
         let has_ff = self.ffmpeg.is_some();
-        let Select { screens, rect, before_full, drag, settings_open, focused, countdown, .. } = sel;
+        let Select { screens, rect, before_full, drag, settings_open, focused, countdown, shot, .. } = sel;
+        let shot_mode = shot.is_some();
         let all = screens.iter().fold(Rect::NOTHING, |a, s| a.union(s.bounds));
         let bounds_list: Vec<Rect> = screens.iter().map(|s| s.bounds).collect();
         // The screen that holds the middle of the area gets the Record button.
@@ -328,6 +369,8 @@ impl LightSnap {
                     let p = ui.input(|i| i.pointer.press_origin()).unwrap_or_default() + offset;
                     *settings_open = false;
                     *drag = Some(match *rect {
+                        // A screenshot area is drawn in one go.
+                        _ if shot_mode => SelDrag::New(p),
                         Some(r) => {
                             let e = edges_near(r, p, 8.0);
                             if e != 0 {
@@ -366,13 +409,20 @@ impl LightSnap {
                         ctx.request_repaint();
                     }
                 }
+                let mut shot_taken = None;
                 if resp.drag_stopped() {
                     *drag = None;
-                    if rect.is_some_and(|r| r.width() < 16.0 || r.height() < 16.0) {
+                    let min = if shot_mode { 3.0 } else { 16.0 };
+                    if rect.is_some_and(|r| r.width() < min || r.height() < min) {
                         *rect = None;
                     }
+                    if shot_mode {
+                        shot_taken = *rect;
+                    }
                 }
-                if let (Some(r), Some(h)) = (*rect, resp.hover_pos().map(|p| p + offset)) {
+                if shot_mode {
+                    ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+                } else if let (Some(r), Some(h)) = (*rect, resp.hover_pos().map(|p| p + offset)) {
                     let icon = match edges_near(r, h, 8.0) {
                         1 | 2 => egui::CursorIcon::ResizeHorizontal,
                         4 | 8 => egui::CursorIcon::ResizeVertical,
@@ -404,11 +454,26 @@ impl LightSnap {
                             }
                         }
                         painter.rect_stroke(lr, 0.0, Stroke::new(1.5, Color32::WHITE), StrokeKind::Outside);
-                        for c in [lr.left_top(), lr.right_top(), lr.left_bottom(), lr.right_bottom(), lr.center_top(), lr.center_bottom(), lr.left_center(), lr.right_center()] {
+                        if shot_mode {
+                            // Only the size, next to the corner being dragged.
+                            let label = format!("{} x {}", (r.width() * scr.scale).round(), (r.height() * scr.scale).round());
+                            let galley = painter.layout_no_wrap(label, FontId::proportional(13.0), Color32::WHITE);
+                            let lrect = Rect::from_min_size(lr.right_bottom() + vec2(8.0, 8.0), galley.size() + vec2(16.0, 8.0));
+                            let lrect = lrect.translate(vec2(
+                                (full.max.x - 4.0 - lrect.max.x).min(0.0),
+                                (full.max.y - 4.0 - lrect.max.y).min(0.0),
+                            ));
+                            painter.rect_filled(lrect, 4.0, Color32::from_black_alpha(190));
+                            painter.galley(lrect.min + vec2(8.0, 4.0), galley, Color32::WHITE);
+                        }
+                        let handles = if shot_mode { Vec::new() } else {
+                            vec![lr.left_top(), lr.right_top(), lr.left_bottom(), lr.right_bottom(), lr.center_top(), lr.center_bottom(), lr.left_center(), lr.right_center()]
+                        };
+                        for c in handles {
                             painter.circle_filled(c, 5.0, Color32::WHITE);
                             painter.circle_stroke(c, 5.0, Stroke::new(1.0, Color32::from_gray(60)));
                         }
-                        if si == main_i && drag.is_none() {
+                        if si == main_i && drag.is_none() && !shot_mode {
                             // Top right: the size, and a button for a full-screen recording.
                             let fs = Rect::from_min_size(lr.right_top() + vec2(-8.0 - 26.0, 8.0), vec2(26.0, 26.0));
                             let fs_resp = ui.interact(fs, Id::new(("fullscreen_btn", si)), Sense::click());
@@ -442,7 +507,11 @@ impl LightSnap {
                     None => {
                         painter.rect_filled(full, 0.0, dim);
                         if si == mouse_i {
-                            let msg = "Drag to choose the area to record   ·   Enter: whole screen   ·   Esc: cancel";
+                            let msg = if shot_mode {
+                                "Drag to choose the area   ·   Enter: whole screen   ·   Esc: cancel"
+                            } else {
+                                "Drag to choose the area to record   ·   Enter: whole screen   ·   Esc: cancel"
+                            };
                             let galley = painter.layout_no_wrap(msg.into(), FontId::proportional(13.0), Color32::WHITE);
                             let r = Rect::from_center_size(full.center(), galley.size() + vec2(32.0, 20.0));
                             painter.rect_filled(r, 10.0, Color32::from_black_alpha(200));
@@ -452,7 +521,7 @@ impl LightSnap {
                 }
 
                 // Record button and options, on the screen that holds the area.
-                if let (Some(r), None, true) = (*rect, *drag, si == main_i) {
+                if let (Some(r), None, true, false) = (*rect, *drag, si == main_i, shot_mode) {
                     let lr = to_local(r);
                     let c = lr.center();
                     let rec_rect = Rect::from_center_size(c - vec2(15.0, 0.0), vec2(84.0, 26.0));
@@ -491,6 +560,10 @@ impl LightSnap {
                 let (enter, esc) = ctx.input(|i| (i.key_pressed(Key::Enter), i.key_pressed(Key::Escape)));
                 if esc || ctx.input(|i| i.viewport().close_requested()) {
                     out = SelectOut::Cancel;
+                } else if let Some(r) = shot_taken {
+                    out = SelectOut::Shot(r);
+                } else if enter && shot_mode {
+                    out = SelectOut::Shot(scr.bounds);
                 } else if enter {
                     out = SelectOut::Record(rect.unwrap_or(scr.bounds));
                 }

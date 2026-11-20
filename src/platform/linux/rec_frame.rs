@@ -87,6 +87,17 @@ impl Drop for RecFrame {
     }
 }
 
+/// Whether the desktop has layer shell, so `RecFrame::show` can draw the frame. GNOME has
+/// none; there a countdown shows the area before the recording starts. Asked once.
+pub fn frame_supported() -> bool {
+    static SUPPORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SUPPORTED.get_or_init(|| {
+        let Ok(conn) = Connection::connect_to_env() else { return false };
+        let Ok((globals, _queue)) = registry_queue_init::<State>(&conn) else { return false };
+        globals.contents().with_list(|list| list.iter().any(|g| g.interface == "zwlr_layer_shell_v1"))
+    })
+}
+
 /// The four bars around `area`, in global points, cut to the screen `screen`. A bar that
 /// would lie off screen (the area touches the screen edge) is left out.
 fn bars(area: Rect, screen: Rect) -> Vec<Rect> {

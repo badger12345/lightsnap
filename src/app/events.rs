@@ -54,7 +54,6 @@ pub(super) fn build_menu(recording: bool, st: &Settings) -> Vec<platform::MenuEn
     }
     vec![
         keyed("area", "area", "Capture Area"),
-        #[cfg(target_os = "macos")]
         keyed("previous", "previous", "Capture Previous Area"),
         keyed("full", "full", "Capture Fullscreen"),
         keyed("record", "record", "Record Video"),
@@ -220,6 +219,33 @@ impl LightSnap {
         }
     }
 
+    /// The frozen pictures of a capture job as screens to choose an area on. The files go away.
+    fn sel_screens(&self, res: &[PathBuf]) -> Vec<SelScreen> {
+        let displays = platform::displays();
+        let mut screens = Vec::new();
+        for (i, p) in res.iter().enumerate() {
+            if let Ok(img) = image::open(p) {
+                let rgba = img.to_rgba8();
+                let d = displays.get(i).copied().unwrap_or(platform::Display {
+                    bounds: Rect::from_min_size(Pos2::ZERO, self.monitor),
+                    scale: rgba.width() as f32 / self.monitor.x.max(1.0),
+                });
+                log::info!("select area: screen {i} at {:?} scale {} picture {}x{}", d.bounds, d.scale, rgba.width(), rgba.height());
+                screens.push(SelScreen {
+                    bounds: d.bounds,
+                    scale: d.scale,
+                    img: Some(Arc::new(ColorImage::from_rgba_unmultiplied(
+                        [rgba.width() as usize, rgba.height() as usize],
+                        rgba.as_raw(),
+                    ))),
+                    tex: None,
+                });
+            }
+            let _ = std::fs::remove_file(p);
+        }
+        screens
+    }
+
     pub(super) fn set_tray_recording(&mut self, on: bool) {
         if self.tray_recording == on {
             return;
@@ -294,38 +320,42 @@ impl LightSnap {
         if let Some(job) = &self.job {
             if let Ok(res) = job.rx.try_recv() {
                 let (kind, for_record, show_after) = (job.kind, job.for_record, job.show_after);
+                let select_shot = job.select_shot;
                 self.job = None;
-                match (res.first().cloned(), for_record) {
+                match (res.first().cloned(), for_record || select_shot) {
                     (Some(p), false) => self.handle_capture(ctx, p, show_after),
-                    (Some(_), true) => {
-                        let displays = platform::displays();
-                        let mut screens = Vec::new();
-                        for (i, p) in res.iter().enumerate() {
-                            if let Ok(img) = image::open(p) {
-                                let rgba = img.to_rgba8();
-                                let d = displays.get(i).copied().unwrap_or(platform::Display {
-                                    bounds: Rect::from_min_size(Pos2::ZERO, self.monitor),
-                                    scale: rgba.width() as f32 / self.monitor.x.max(1.0),
-                                });
-                                log::info!(
-                                    "record area: screen {i} at {:?} scale {} picture {}x{}",
-                                    d.bounds,
-                                    d.scale,
-                                    rgba.width(),
-                                    rgba.height()
-                                );
-                                screens.push(SelScreen {
-                                    bounds: d.bounds,
-                                    scale: d.scale,
-                                    img: Some(Arc::new(ColorImage::from_rgba_unmultiplied(
-                                        [rgba.width() as usize, rgba.height() as usize],
-                                        rgba.as_raw(),
-                                    ))),
-                                    tex: None,
-                                });
+                    (Some(_), true) if select_shot => {
+                        let screens = self.sel_screens(&res);
+                        let previous = if kind == CaptureKind::Previous { self.last_area } else { None };
+                        if screens.is_empty() {
+                            platform::end_screen_session();
+                            self.show_window(ctx);
+                            self.toast(format!("Could not read the screen. {}", platform::SCREEN_PERMISSION_HINT), None);
+                        } else if let Some(r) = previous {
+                            // The same area again, without choosing.
+                            platform::end_screen_session();
+                            match capture::crop_screens(&screens, r) {
+                                Some(p) => self.handle_capture(ctx, p, show_after),
+                                None => self.toast("Could not read the screen.", None),
                             }
-                            let _ = std::fs::remove_file(p);
+                        } else {
+                            self.select = Some(Select {
+                                screens,
+                                rect: None,
+                                before_full: None,
+                                drag: None,
+                                settings_open: false,
+                                focused: false,
+                                resent: 0,
+                                countdown: None,
+                                shot: Some(show_after),
+                                placed: false,
+                            });
+                            ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
                         }
+                    }
+                    (Some(_), true) => {
+                        let screens = self.sel_screens(&res);
                         if screens.is_empty() {
                             self.show_window(ctx);
                             self.perm_prompt = !platform::screenshot_allowed();
@@ -346,6 +376,8 @@ impl LightSnap {
                                 focused: false,
                                 resent: 0,
                                 countdown: None,
+                                shot: None,
+                                placed: false,
                             });
                             ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
                         }

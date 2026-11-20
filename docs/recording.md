@@ -36,7 +36,7 @@ sequenceDiagram
     App->>U: Area selection on the still picture
     U->>App: Drag the area, click Record
     opt Linux
-        App->>U: Red frame and 3 s countdown
+        App->>U: GNOME only: red frame and 3 s countdown
     end
 
     Note over App,FF: Step 2: record
@@ -124,9 +124,15 @@ quality settings). Linux cannot record without ffmpeg.
   second, so the video has an even frame rate.
 - **The screen stays shared from the still picture to the end of the recording.** The person
   picks the screen once, and the recording starts at once.
-- **The area is chosen in the full-screen main window, with a countdown.** Wayland can
-  neither place windows nor reliably put a new one in front. For the same reason there is
-  no control bar while recording: the tray and the shortcuts control it.
+- **The area is chosen in the full-screen main window.** Wayland can neither place windows
+  nor reliably put a new one in front. The window goes full screen on the shared screen
+  (the compositor may first open it on another one; LightSnap moves it). For the same
+  reason there is no control bar while recording: the tray and the shortcuts control it.
+  Where no red frame can be drawn (GNOME), a 3 s countdown shows the area first.
+- **Area screenshots use the same selection.** The shared screen's frozen picture, without
+  the mouse pointer; the picture is taken when the mouse is let go, as with
+  `screencapture -i` on macOS. The desktop's own pickers ask for an extra click (GNOME) or
+  offer no area at all (KDE). The screen is shared only while choosing.
 - **The red frame is four layer surfaces outside the area.** The wlr-layer-shell protocol
   lets a surface sit at a fixed place above all windows, without taking clicks or keys.
   KDE Plasma, Sway, Hyprland and COSMIC support it. GNOME does not, and gets no frame:
