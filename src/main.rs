@@ -124,7 +124,8 @@ fn run_linux(
             }
             let st = state.clone();
             let reattach = !first;
-            eframe::run_native_ext(
+            platform::main_window_open(true);
+            let result = eframe::run_native_ext(
                 "LightSnap",
                 options,
                 Some(ctx.clone()),
@@ -134,7 +135,9 @@ fn run_linux(
                     }
                     Ok(Box::new(app::Shared(st)))
                 }),
-            )?;
+            );
+            platform::main_window_open(false);
+            result?;
         }
         first = false;
         // No window: keep the app going until it needs one again.

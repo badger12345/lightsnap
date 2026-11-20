@@ -40,7 +40,8 @@ pub(super) struct Select {
     /// How often lost pictures and letters were sent again (see show_immediate).
     pub(super) resent: u32,
     /// Linux: the area is chosen and shown for a few seconds before the recording starts
-    /// (Wayland gives no frame around the area during the recording).
+    /// (a plain Wayland window can't frame the area during the recording; GNOME shows no
+    /// frame at all).
     pub(super) countdown: Option<Instant>,
 }
 
@@ -61,6 +62,10 @@ pub(super) struct RecState {
     /// The screen being recorded (global points).
     pub(super) screen: Rect,
     pub(super) last_secs: u64,
+    /// Linux: the red frame around the area (KDE, Sway, Hyprland, COSMIC; not GNOME).
+    /// Dropped with the recording, which removes it.
+    #[cfg(target_os = "linux")]
+    pub(super) frame: Option<crate::platform::RecFrame>,
 }
 
 pub(super) fn edges_near(r: Rect, p: Pos2, tol: f32) -> u8 {
@@ -529,7 +534,14 @@ impl LightSnap {
         match Recorder::start(opts, self.ffmpeg.clone(), &devices) {
             Ok(rec) => {
                 self.rec_started_name = self.settings.make_name("Screencast");
-                self.recording = Some(RecState { rec, rect, screen: screen_bounds, last_secs: u64::MAX });
+                self.recording = Some(RecState {
+                    rec,
+                    rect,
+                    screen: screen_bounds,
+                    last_secs: u64::MAX,
+                    #[cfg(target_os = "linux")]
+                    frame: crate::platform::RecFrame::show(rect),
+                });
                 self.set_tray_recording(true);
                 ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
             }

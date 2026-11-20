@@ -98,8 +98,8 @@ To sign your own builds, see [Signing](CONTRIBUTING.md#signing-macos) in CONTRIB
 
 ## Linux
 
-LightSnap runs on Wayland desktops. X11 is not supported. It is tested on GNOME; KDE Plasma
-should work too.
+LightSnap runs on Wayland desktops. X11 is not supported. It is tested on GNOME and KDE
+Plasma.
 
 Wayland lets no app read the screen or catch keys on its own, so LightSnap asks the desktop
 through its portals. Your desktop asks you once for each:
@@ -111,7 +111,9 @@ through its portals. Your desktop asks you once for each:
   (GNOME: **Settings › Apps › LightSnap**).
 
 Capture Area and Capture Window use your desktop's own screenshot picker. While recording,
-LightSnap has no window: stop or pause it from the tray icon or with the shortcut.
+LightSnap has no window: stop or pause it from the tray icon or with the shortcut. On KDE
+Plasma, Sway, Hyprland and COSMIC a red frame shows the recorded area, as on macOS (orange
+while paused). GNOME does not let apps draw such a frame.
 
 Needs:
 

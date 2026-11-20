@@ -440,6 +440,10 @@ impl LightSnap {
                 if secs != r.last_secs {
                     r.last_secs = secs;
                     let paused = r.rec.is_paused();
+                    #[cfg(target_os = "linux")]
+                    if let Some(f) = &r.frame {
+                        f.set_paused(paused);
+                    }
                     let title = format!("{}{}", if paused { "❚❚ " } else { "" }, record::format_elapsed(r.rec.elapsed()));
                     if let Some(t) = &self.tray {
                         t.set_title(Some(&title));

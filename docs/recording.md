@@ -53,7 +53,7 @@ sequenceDiagram
     alt macOS
         App->>U: Red frame around the area, control bar with timer
     else Linux
-        App->>U: Tray icon shows the recording, control by tray and shortcuts
+        App->>U: Red frame around the area (not on GNOME), control by tray and shortcuts
     end
 
     opt Pause and resume
@@ -126,6 +126,11 @@ quality settings). Linux cannot record without ffmpeg.
   picks the screen once, and the recording starts at once.
 - **The area is chosen in the full-screen main window, with a countdown.** Wayland can
   neither place windows nor reliably put a new one in front. For the same reason there is
-  no frame or control bar while recording: the tray and the shortcuts control it.
+  no control bar while recording: the tray and the shortcuts control it.
+- **The red frame is four layer surfaces outside the area.** The wlr-layer-shell protocol
+  lets a surface sit at a fixed place above all windows, without taking clicks or keys.
+  KDE Plasma, Sway, Hyprland and COSMIC support it. GNOME does not, and gets no frame:
+  only a Shell extension or X11 could draw one there, and both are not worth it. The
+  recording is cropped to the area, so the frame is not in the video.
 - **ffmpeg comes from the system.** LightSnap does not ship it on Linux, so encoding with
   libx264 is fine. Microphones come from PulseAudio or PipeWire's Pulse server.

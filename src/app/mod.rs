@@ -655,8 +655,9 @@ impl eframe::App for LightSnap {
             // The main window shows only the selection this frame.
             return;
         }
-        // Wayland can't place the frame around the area or the control bar next to it;
-        // on Linux the recording is controlled from the tray and the shortcuts.
+        // Wayland can't place the control bar next to the area; on Linux the recording is
+        // controlled from the tray and the shortcuts. The frame is a layer surface there
+        // (see platform::RecFrame).
         if !cfg!(target_os = "linux") {
             if let Some(a) = self.recording_overlays(&ctx) {
                 action = Some(a);

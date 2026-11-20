@@ -17,6 +17,7 @@ use std::io::Write;
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -44,6 +45,10 @@ struct Cast {
 }
 
 static CAST: Mutex<Option<Cast>> = Mutex::new(None);
+/// Whether LightSnap's main window is on screen, and the number of the newest frame when
+/// it last closed. Frames up to that one may still show it (see `feed`).
+static WINDOW_OPEN: AtomicBool = AtomicBool::new(false);
+static CLOSED_AT_SEQ: AtomicU64 = AtomicU64::new(0);
 /// Description → PulseAudio source name, filled by `list_devices`.
 static SOURCES: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
 
@@ -106,6 +111,7 @@ fn start_cast(cursor: bool) -> Result<(), String> {
             }
         })
         .map_err(|e| e.to_string())?;
+    CLOSED_AT_SEQ.store(0, Ordering::Relaxed);
     *CAST.lock().map_err(|e| e.to_string())? = Some(Cast { session, frame: frame.clone(), stop, thread: Some(thread), position });
     // The compositor sends a frame right away.
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -129,6 +135,16 @@ pub fn end_screen_session() {
         }
         let _ = pollster::block_on(c.session.close());
     }
+}
+
+/// Called by main.rs when the main window opens and after it closed. A recording starts
+/// with the first frame after the window is gone, so the video never shows the area
+/// selection.
+pub fn main_window_open(open: bool) {
+    if !open {
+        CLOSED_AT_SEQ.store(latest_frame().map(|f| f.seq).unwrap_or(0), Ordering::Relaxed);
+    }
+    WINDOW_OPEN.store(open, Ordering::Relaxed);
 }
 
 /// Where the shared screen sits on the desktop, if a screen is shared.
@@ -419,11 +435,16 @@ fn feed(fifo: &Path, w: u32, h: u32, fps: u32) {
         let flags = libc::fcntl(fd, libc::F_GETFL);
         libc::fcntl(fd, libc::F_SETFL, flags & !libc::O_NONBLOCK);
     }
-    // The compositor sends frames only when the screen changes. The newest one may still
-    // show LightSnap's area selection, which closes just now; wait briefly for the next.
-    let start_seq = latest_frame().map(|f| f.seq).unwrap_or(0);
-    let wait_until = Instant::now() + Duration::from_millis(700);
-    while Instant::now() < wait_until && latest_frame().is_some_and(|f| f.seq == start_seq) {
+    // The compositor sends frames only when the screen changes. The newest ones may still
+    // show LightSnap's area selection, which closes just now (the red frame appearing
+    // around the area makes a new one while it is open). Wait until the window is gone
+    // and a frame came after that.
+    let wait_until = Instant::now() + Duration::from_secs(2);
+    let window_gone = || {
+        !WINDOW_OPEN.load(Ordering::Relaxed)
+            && latest_frame().is_some_and(|f| f.seq > CLOSED_AT_SEQ.load(Ordering::Relaxed))
+    };
+    while Instant::now() < wait_until && !window_gone() {
         std::thread::sleep(Duration::from_millis(10));
     }
     let period = Duration::from_secs_f64(1.0 / fps as f64);
