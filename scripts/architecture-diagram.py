@@ -48,16 +48,16 @@ def line(points, label=None, lx=None, ly=None, anchor="middle", arrow=True, rota
 
 # Title
 P.append('<text x="560" y="62" font-size="28" font-weight="700" fill="#111">LightSnap: component diagram (C4 level 3)</text>')
-P.append('<text x="560" y="94" font-size="15" fill="#444">As of v0.4.0. One code base and one UI (egui/eframe on OpenGL) on macOS and Linux. Only the platform layer differs per system.</text>')
+P.append('<text x="560" y="94" font-size="15" fill="#444">As of v1.0.0. One code base and one UI (egui/eframe on OpenGL) on macOS and Linux. Only the platform layer differs per system.</text>')
 
 # Person
 P.append(f'<circle cx="370" cy="42" r="24" fill="{PERSON[0]}"/>')
 box(260, 62, 220, 80, "User", "Person", [], style=PERSON, rx=26)
 
 # Container boundary
-P.append('<rect x="20" y="180" width="1640" height="990" rx="6" fill="none" stroke="#777" stroke-width="1.6" stroke-dasharray="10 6"/>')
-P.append('<text x="40" y="1140" font-size="17" font-weight="700" fill="#333">LightSnap</text>')
-P.append('<text x="40" y="1160" font-size="13" fill="#555">[Container: desktop app, one process. Rust, egui/eframe + OpenGL]</text>')
+P.append('<rect x="20" y="180" width="1640" height="1035" rx="6" fill="none" stroke="#777" stroke-width="1.6" stroke-dasharray="10 6"/>')
+P.append('<text x="40" y="1185" font-size="17" font-weight="700" fill="#333">LightSnap</text>')
+P.append('<text x="40" y="1205" font-size="13" fill="#555">[Container: desktop app, one process. Rust, egui/eframe + OpenGL]</text>')
 
 # Row 1
 box(80, 220, 580, 125, "Main window & control", "Component: egui · app/mod.rs, events.rs, views.rs",
@@ -102,7 +102,7 @@ line([(c[1], 565), (c[1], 658)], "loads, exports", c[1] + 10, 615, anchor="start
 line([(c[2], 565), (c[2], 658)], "edits shapes", c[2] + 10, 615, anchor="start")
 
 # Platform layer
-P.append('<rect x="80" y="850" width="1545" height="255" rx="10" fill="#C9DEF5" stroke="#5D82A8" stroke-width="1.5"/>')
+P.append('<rect x="80" y="850" width="1545" height="300" rx="10" fill="#C9DEF5" stroke="#5D82A8" stroke-width="1.5"/>')
 P.append('<text x="100" y="878" font-size="17" font-weight="700" fill="#0B2545">Platform layer</text>')
 P.append('<text x="232" y="878" font-size="12.5" fill="#0B2545" opacity="0.85">[Component: Rust · platform/mod.rs]</text>')
 P.append('<text x="100" y="900" font-size="13.5" fill="#0B2545">The same functions on both systems: screenshots, clipboard, screens, tray, shortcuts, recording, opening files, notifications, launch at login. Picked with cfg(target_os) at compile time.</text>')
@@ -112,15 +112,17 @@ mac = ["Tray & shortcuts: tray-icon, global-hotkey",
        "Clipboard: NSPasteboard (objc2)",
        "Screens, mouse position: CoreGraphics",
        "Recording: ffmpeg with AVFoundation, else screencapture -v",
-       "Notifications: osascript · Open files: open"]
+       "Notifications: UserNotifications · Open files: open"]
 lin = ["Tray: ksni (StatusNotifierItem over D-Bus)",
-       "Shortcuts, screenshots, screencast: xdg-desktop-portal (ashpd)",
+       "Shortcuts, screencast: xdg-desktop-portal (ashpd)",
+       "Screenshots: frozen picture from the PipeWire stream",
        "Recording: PipeWire stream, fed to ffmpeg through a named pipe",
-       "Clipboard: arboard (Wayland data-control)",
-       "Screens: Wayland (smithay-client-toolkit)",
+       "Record frame: wlr-layer-shell (not GNOME) · Raise: xdg-activation",
+       "Clipboard: arboard, on GNOME plain Wayland (wl_data_device)",
+       "Screens: Wayland (smithay-client-toolkit) · Windows: KWin script",
        "Window frame: winit Adwaita CSD · Open files: xdg-open, gio"]
-box(100, 915, 745, 175, "macOS implementation", "Component: Rust · platform/macos/", mac, style=PLAT, align="start")
-box(860, 915, 745, 175, "Linux implementation (Wayland only)", "Component: Rust · platform/linux/", lin, style=PLAT, align="start")
+box(100, 915, 745, 220, "macOS implementation", "Component: Rust · platform/macos/", mac, style=PLAT, align="start")
+box(860, 915, 745, 220, "Linux implementation (Wayland only)", "Component: Rust · platform/linux/", lin, style=PLAT, align="start")
 
 line([(c[0], 565), (c[0], 848)], "screenshots, screens", c[0] + 10, 715, anchor="start")
 line([(c[4], 565), (c[4], 848)], "screen source,\nffmpeg arguments", c[4] + 10, 715, anchor="start")
@@ -139,15 +141,15 @@ box(1720, 220, 260, 125, "File system", "external",
 line([(1460, 282), (1718, 282)], "reads, writes settings.json", 1560, 272)
 
 # Operating systems
-box(270, 1225, 400, 115, "macOS", "Software system",
-    ["AppKit, CoreGraphics, AVFoundation,", "screencapture, Screen Recording permission"], style=EXT)
-box(1032, 1225, 400, 115, "Linux desktop (GNOME, KDE)", "Software system",
+box(270, 1265, 400, 115, "macOS", "Software system",
+    ["AppKit, CoreGraphics, AVFoundation, UserNotifications,", "screencapture, Screen Recording permission"], style=EXT)
+box(1032, 1265, 400, 115, "Linux desktop (GNOME, KDE)", "Software system",
     ["Wayland compositor, xdg-desktop-portal,", "PipeWire, D-Bus"], style=EXT)
-line([(470, 1090), (470, 1223)], "system calls, child processes", 482, 1200, anchor="start")
-line([(1232, 1090), (1232, 1223)], "D-Bus, Wayland, PipeWire", 1244, 1200, anchor="start")
+line([(470, 1135), (470, 1263)], "system calls, child processes", 482, 1240, anchor="start")
+line([(1232, 1135), (1232, 1263)], "D-Bus, Wayland, PipeWire", 1244, 1240, anchor="start")
 
 # Legend
-lx, ly = 1720, 1190
+lx, ly = 1720, 1230
 P.append(f'<text x="{lx}" y="{ly}" font-size="14" font-weight="700" fill="#333">Legend</text>')
 items = [(PERSON[0], "Person"), (COMP[0], "Component"), (PLAT[0], "Component, one per system"),
          (CONT[0], "External container"), (EXT[0], "External system")]
